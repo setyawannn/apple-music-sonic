@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "skills": [
+    ".opencode/skills"
+  ],
+  "mcp": {
+    "servers": {
+      "rea": {
+        "command": "cmd.exe",
+        "args": ["/d", "/c", "npx", "-y", "rea-agents@latest", "mcp"],
+        "env": {}
+      }
+    }
+  }
+}

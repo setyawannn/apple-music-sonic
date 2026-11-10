@@ -1,0 +1,51 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "Apple Music RS — A high-performance Apple Music client built with Rust"
+authors = ["you"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-process = "2"
+
+# Audio
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "alac", "flac", "isomp4", "ogg", "wav", "pcm"] }
+rodio = "0.19"
+
+# HTTP
+reqwest = { version = "0.12", features = ["json"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Image
+image = "0.25"
+
+# Utilities
+anyhow = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+walkdir = "2"
+chrono = "0.4"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+libloading = "0.8"

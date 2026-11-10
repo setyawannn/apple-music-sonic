@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+target/
+**/*.rs.bk
+
+# Secrets & runtime state — never commit
+.env
+.env.*
+*.pem
+*.p8
+*.p12
+session.json
+auth_profile/
+*.db
+*.sqlite
+
+# Logs & scratch
+*.log
+scratch_*.ps1
+screen_capture.png
+
+# Agent/tooling state
+.opencode/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -24,6 +24,8 @@ screen_capture.png
 
 # Agent/tooling state
 .opencode/
+.agents/
+.mcp.json
 
 # OS
 .DS_Store

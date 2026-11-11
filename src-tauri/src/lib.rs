@@ -293,10 +293,21 @@ const PLAYER_STATE_PORT: u16 = 38471;
 /// Last state blob seen on the loopback channel, to log transitions only.
 static LAST_PLAYER_STATE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Set by the hidden page once MusicKit is live. Commands never poll for it:
+/// they queue inside the page and this flag only gates the one re-eval.
+static PLAYER_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PLAYER_READY_SIGNAL: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+
+fn player_ready_signal() -> &'static tokio::sync::Notify {
+    PLAYER_READY_SIGNAL.get_or_init(tokio::sync::Notify::new)
+}
+
 const PLAYER_BOOTSTRAP: &str = r#"
 (function () {
   var PORT = 38471;
   window.__mkReady = new Promise(function (res) { window.__mkResolve = res; });
+  window.__mkQueue = window.__mkQueue || [];
+
   function got() {
     try {
       if (window.MusicKit && typeof window.MusicKit.getInstance === 'function') {
@@ -306,30 +317,12 @@ const PLAYER_BOOTSTRAP: &str = r#"
     } catch (e) {}
     return false;
   }
-  if (!got()) {
-    var tries = 0;
-    var t = setInterval(function () {
-      tries += 1;
-      if (got() || tries > 200) clearInterval(t);
-    }, 300);
+
+  // Tells Rust the page can accept commands. Replaces the old blind retry loop.
+  function signalReady() {
+    fetch('http://127.0.0.1:' + PORT + '/ready', { method: 'POST', mode: 'no-cors', body: '1' }).catch(function () {});
   }
-  window.__mkDo = async function (cmd, arg, nonce) {
-    // Each user action carries a nonce; the retry burst re-sends the same nonce,
-    // so only the first attempt runs. A fresh click gets a fresh nonce.
-    if (nonce) {
-      if (window.__mkNonce === nonce) return;
-      window.__mkNonce = nonce;
-    }
-    var m = await window.__mkReady;
-    if (cmd === 'play') {
-      await m.setQueue({ song: String(arg) });
-      return m.play();
-    }
-    if (cmd === 'pause') return m.pause();
-    if (cmd === 'resume') return m.play();
-    if (cmd === 'stop') return m.stop();
-    if (cmd === 'seek') return m.seekToTime(Number(arg));
-  };
+
   function report() {
     try {
       var m = window.MusicKit.getInstance();
@@ -348,7 +341,57 @@ const PLAYER_BOOTSTRAP: &str = r#"
       fetch('http://127.0.0.1:' + PORT + '/state', { method: 'POST', mode: 'no-cors', body: body }).catch(function () {});
     } catch (e) {}
   }
-  setInterval(report, 1000);
+
+  window.__mkDo = async function (cmd, arg, nonce) {
+    // Each user action carries a nonce; a re-eval carries the same one,
+    // so only the first attempt runs. A fresh click gets a fresh nonce.
+    if (nonce) {
+      if (window.__mkNonce === nonce) return;
+      window.__mkNonce = nonce;
+    }
+    var m = await window.__mkReady;
+    if (cmd === 'play') {
+      await m.setQueue({ song: String(arg) });
+      return m.play();
+    }
+    if (cmd === 'pause') return m.pause();
+    if (cmd === 'resume') return m.play();
+    if (cmd === 'stop') return m.stop();
+    if (cmd === 'seek') return m.seekToTime(Number(arg));
+  };
+
+  function run(job) {
+    window.__mkDo(job.cmd, job.arg, job.nonce)
+      .then(report)
+      .catch(function (e) { console.error('mk', e); });
+  }
+
+  // Runs every command queued so far, including ones Rust pushed before this
+  // script existed in the current document.
+  window.__mkDrain = function () {
+    var jobs = window.__mkQueue.splice(0);
+    jobs.forEach(run);
+  };
+
+  window.__mkReady.then(function (m) {
+    signalReady();
+    // Report on real player transitions instead of waiting for the next tick.
+    ['playbackStateDidChange', 'nowPlayingItemDidChange', 'playbackTimeDidChange'].forEach(function (name) {
+      try { m.addEventListener(name, report); } catch (e) {}
+    });
+    report();
+    setInterval(report, 250);
+  });
+
+  if (!got()) {
+    var tries = 0;
+    var t = setInterval(function () {
+      tries += 1;
+      if (got() || tries > 200) clearInterval(t);
+    }, 300);
+  }
+
+  window.__mkDrain();
 })();
 "#;
 
@@ -365,6 +408,7 @@ fn ensure_player(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String>
         .map_err(|e| e.to_string())?
         .join("auth_profile");
     let _ = std::fs::create_dir_all(&profile);
+    PLAYER_READY.store(false, std::sync::atomic::Ordering::SeqCst);
 
     let url: tauri::Url = "https://music.apple.com/id/"
         .parse()
@@ -379,46 +423,58 @@ fn ensure_player(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String>
             "--autoplay-policy=no-user-gesture-required \
              --disable-background-timer-throttling \
              --disable-renderer-backgrounding \
-             --disable-backgrounding-occluded-windows",
+             --disable-backgrounding-occluded-windows \
+             --disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults",
         )
         .data_directory(profile)
         .build()
         .map_err(|e| e.to_string())
 }
 
-/// Drive the hidden player. Repeats a few times because the page may still be
-/// loading when the first command arrives; the bootstrap de-duplicates plays.
+/// Drive the hidden player without polling.
+///
+/// The page owns a command queue, so a command issued before MusicKit is live is
+/// simply parked and executed the moment the player resolves. One eval is enough
+/// in the normal case. The only retry happens if the page had not reported ready
+/// yet, and it waits on that signal instead of sleeping.
 async fn player_command(app: &tauri::AppHandle, cmd: &str, arg: Option<String>) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+
     let window = ensure_player(app)?;
-    let has_arg = arg.is_some();
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis().to_string())
         .unwrap_or_else(|_| "0".to_string());
-    let js = match arg {
-        Some(a) => format!(
-            "if (window.__mkDo) {{ window.__mkDo('{}', '{}', '{}').catch(function(e){{console.error('mk', e);}}); }}",
-            cmd, a, nonce
-        ),
-        None => format!(
-            "if (window.__mkDo) {{ window.__mkDo('{}', null, '{}').catch(function(e){{console.error('mk', e);}}); }}",
-            cmd, nonce
-        ),
-    };
-    println!("[PLAYER] cmd={} has_arg={} nonce={}", cmd, has_arg, nonce);
 
-    for attempt in 0..6 {
-        if app.get_webview_window(PLAYER_LABEL).is_none() {
-            println!("[PLAYER] window vanished at attempt {}", attempt);
-            return Err("player window closed".to_string());
-        }
-        if let Err(e) = window.eval(&js) {
-            println!("[PLAYER] eval failed at attempt {}: {}", attempt, e);
-            return Err(e.to_string());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    let job = serde_json::json!({ "cmd": cmd, "arg": arg, "nonce": nonce });
+    let js = format!(
+        "(function(j){{ (window.__mkQueue = window.__mkQueue || []).push(j);          if (window.__mkDrain) window.__mkDrain(); }})({});",
+        job
+    );
+    let dispatch = |w: &tauri::WebviewWindow| w.eval(&js).map_err(|e| e.to_string());
+
+    dispatch(&window)?;
+    println!("[PLAYER] cmd={} nonce={}", cmd, nonce);
+    if PLAYER_READY.load(Ordering::SeqCst) {
+        return Ok(());
     }
-    Ok(())
+
+    // Page has not loaded MusicKit yet (cold start with pre-warm disabled, or a
+    // reload). Wait on the ready signal, then hand the command over once more.
+    // The nonce makes the second dispatch a no-op if the first one already ran.
+    let ready = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        player_ready_signal().notified(),
+    )
+    .await;
+
+    if ready.is_err() {
+        return Err("player did not become ready within 30s".to_string());
+    }
+    if app.get_webview_window(PLAYER_LABEL).is_none() {
+        return Err("player window closed".to_string());
+    }
+    dispatch(&window)
 }
 
 #[tauri::command]
@@ -469,6 +525,28 @@ fn start_state_listener(app: tauri::AppHandle) {
                 let mut buf = vec![0u8; 16384];
                 let n = sock.read(&mut buf).await.unwrap_or(0);
                 let request = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                // The page reports readiness once MusicKit is live; commands wait on this.
+                if request.lines().next().map_or(false, |l| l.starts_with("POST /ready")) {
+                    PLAYER_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+                    player_ready_signal().notify_waiters();
+                    println!("[PLAYER] ready");
+                    let _ = sock
+                        .write_all(
+                            b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
+                        .await;
+                    return;
+                }
+
+                if request.lines().next().map_or(false, |l| l.starts_with("POST /debug")) {
+                    if let Some(idx) = request.find("\r\n\r\n") {
+                        println!("[PLAYER] debug {}", request[idx + 4..].trim());
+                    }
+                    let _ = sock.write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                    return;
+                }
+
                 if let Some(idx) = request.find("\r\n\r\n") {
                     let body = request[idx + 4..].trim().to_string();
                     if !body.is_empty() {
@@ -923,6 +1001,39 @@ pub fn run() {
 
                     // Hidden PlayReady-backed player state channel.
                     start_state_listener(app.handle().clone());
+
+                    // Pre-warm the hidden player: paying the page load here, while the
+                    // user is browsing, is what keeps the first click instant.
+                    if let Err(e) = ensure_player(app.handle()) {
+                        eprintln!("[SETUP] player pre-warm failed: {}", e);
+                    } else {
+                        let probe = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            for i in 0..4 {
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                let ready = PLAYER_READY.load(std::sync::atomic::Ordering::SeqCst);
+                                let url = probe
+                                    .get_webview_window(PLAYER_LABEL)
+                                    .and_then(|w| w.url().ok())
+                                    .map(|u| u.to_string())
+                                    .unwrap_or_else(|| "none".into());
+                                println!("[PLAYER] probe {}s ready={} url={}", (i + 1) * 5, ready, url);
+                                if !ready {
+                                    let diag = "fetch('http://127.0.0.1:38471/debug',{method:'POST',mode:'no-cors',body:JSON.stringify({mk:typeof window.MusicKit,getinst:(window.MusicKit&&typeof window.MusicKit.getInstance),mkdo:typeof window.__mkDo,q:(window.__mkQueue||[]).length,rs:document.readyState,href:location.href})}).catch(function(){});";
+                                    let _ = probe.get_webview_window(PLAYER_LABEL).map(|w| w.eval(diag));
+                                }
+                            }
+                        });
+                    }
+
+                    // The hidden player is a real window, so Tauri would keep the app
+                    // alive after the main window closes. Shut down explicitly instead.
+                    let quitting = mw.clone();
+                    mw.on_window_event(move |event| {
+                        if let tauri::WindowEvent::Destroyed = event {
+                            let _ = quitting.app_handle().exit(0);
+                        }
+                    });
                 }
                 None => {
                     eprintln!("[SETUP] ERROR: No webview window with label 'main' found!");

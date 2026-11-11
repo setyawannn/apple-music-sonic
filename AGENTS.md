@@ -1,81 +1,62 @@
-# Apple Music RS — Agent Instructions
-
-**Project:** Single Rust binary (~14 MB, ~80 MB RAM) playing Apple Music + local files.
-**Budget:** $0. No Apple Developer Program. Public MusicKit token scraped from web.
-**Status:** 5,655 lines Rust, 22 files, 38 Tauri commands. Streaming engine not built yet.
+# AGENTS — Apple Music RS
 
 ## Quick Facts
 
-- ✅ **Local playback** works — MP3/FLAC/ALAC/AAC via symphonia → rodio
-- ✅ **Library management** works — SQLite, scanner, metadata, artwork, M3U/PLS
-- ✅ **Apple Music API** works — search, charts, recommendations, library sync
-- ✅ **Authentication** works — hardcoded dev token + auto-refresh + WebView2 sign-in + cookie import
-- ✅ **DLL loading** works — CoreAudioToolbox, CoreMedia, CoreFP all load and bind
-- ❌ **Full song streaming** does NOT work — HLS + FairPlay pipeline not built
+- **22 Rust files**, 5,655 lines, 38 backend commands, 47 total Tauri commands
+- **~20 MB** release binary, ~80 MB RAM target
+- **$0 budget** — no Apple Developer account, no paid APIs
+- **Streaming works** via hidden MusicKit WebView2 + Windows PlayReady CDM
+- **Local playback** via symphonia + rodio
 
-## What to Build Next
-
-The only missing piece is the streaming pipeline. See `3-WHAT-IS-MISSING.md`.
-
-Priority order:
-1. Wire HLS URL fetch from API
-2. Wire FigContentKeyBoss for content key
-3. Wire CoreFP ordinals for key decryption
-4. Wire FigSampleBufferSetDecryptor for segment decryption
-5. Wire CoreAudio ALAC decoder for PCM output
-6. Connect to UI play button
-
-## File Map
+## Document Structure
 
 ```
-apple-music-rs/
-├── index.html                    ← Apple Music UI (176 lines)
-├── src/
-│   ├── js/app.js                 ← Frontend logic (1,258 lines)
-│   └── styles/app.css            ← Apple Music theme (1,011 lines)
-├── src-tauri/
-│   └── src/
-│       ├── lib.rs                ← 38 commands, lifecycle (798 lines)
-│       ├── audio/
-│       │   ├── mod.rs            ← Engine, worker thread (403 lines)
-│       │   ├── queue.rs          ← Queue, shuffle, repeat (212 lines)
-│       │   ├── source.rs         ← symphonia decoder (193 lines)
-│       │   └── stream.rs         ← HLS parser, cache (263 lines)
-│       ├── api/
-│       │   ├── mod.rs            ← Re-exports
-│       │   ├── auth.rs           ← Dev token, sign-in (166 lines)
-│       │   ├── client.rs         ← REST API client (474 lines)
-│       │   ├── models.rs         ← Data models (101 lines)
-│       │   └── local_session.rs  ← Cookie import (397 lines)
-│       ├── drm/
-│       │   ├── mod.rs            ← Re-exports
-│       │   ├── locator.rs        ← Find install, stage DLLs (598 lines)
-│       │   ├── loader.rs         ← LoadLibrary, pin (319 lines)
-│       │   ├── coreaudio.rs      ← CoreAudioToolbox FFI (233 lines)
-│       │   ├── coremedia.rs      ← CoreMedia FFI (198 lines)
-│       │   └── corefp.rs         ← CoreFP FFI (168 lines)
-│       └── library/
-│           ├── mod.rs            ← Models (190 lines)
-│           ├── scanner.rs        ← File scanner (107 lines)
-│           ├── db.rs             ← SQLite (399 lines)
-│           ├── metadata.rs       ← Audio tags (143 lines)
-│           ├── artwork.rs        ← Album art (71 lines)
-│           └── playlist.rs       ← M3U/PLS (96 lines)
-└── docs/
-    ├── 1-STRATEGY.md             ← This project's direction
-    ├── 2-WHAT-IS-IMPLEMENTED.md  ← Complete audit
-    ├── 3-WHAT-IS-MISSING.md      ← Streaming gap analysis
-    ├── 4-HOW-TO-RUN.md           ← Build/run instructions
-    ├── decoded-spec.md           ← Original REA report
-    └── plan/                      ← Planning docs
+docs/
+├── 01-getting-started/
+│   ├── 01-STRATEGY.md       ← The master strategy
+│   ├── 02-HOW-TO-RUN.md     ← Build & run instructions
+│   └── 03-AGENTS.md         ← This file
+├── 02-architecture/
+│   ├── HOW-IT-WORKS.md      ← How the app actually works
+│   └── SYSTEM-DESIGN.md     ← System architecture
+├── 03-implementation/
+│   ├── 01-WHATS-DONE.md     ← Complete implementation audit
+│   ├── 02-WHATS-MISSING.md  ← Gap analysis
+│   └── 03-TO-DO.md          ← Priority to-do list
+├── 04-bugs/
+│   ├── 01-DELAYED-PLAY.md   ← 5-15s play delay (unfixed)
+│   └── 02-WINDOW-INIT-FIX.md← Window initialization fix (solved)
+└── 05-reference/
+    ├── 01-REA-DECODE.md     ← Original REA decode report
+    ├── 02-FULL-DECODE-REPORT.md ← Complete decode report
+    └── 03-API-CONTRACTS.md  ← Live API contracts from Fiddler
 ```
 
-## Running
+## Architecture (50 words)
 
-```bash
-npm install && cargo tauri dev
-```
+User clicks a catalog song → `invoke("stream_play")` → hidden WebView2 at music.apple.com receives JS command → `MusicKit.play()` → Windows PlayReady CDM handles FairPlay → audio plays. Every second, the hidden player POSTs state to a local TCP server → Rust emits `player-state` event → frontend updates UI.
 
 ## Key Principle
 
-**We do NOT pay for anything.** The MusicKit token comes from music.apple.com's public JS bundle. The DRM DLLs come from the official app's install directory. The user already pays Apple for their subscription.
+**No Apple Developer account. No $99/year.** Public MusicKit token scraped from web JS bundle. Hidden WebView2 uses user's existing subscription. Personal hobby project only.
+
+## Files Reference
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src-tauri/src/lib.rs` | 1004 | 47 commands, hidden player, auth, lifecycle |
+| `src-tauri/src/audio/mod.rs` | 403 | Local playback engine |
+| `src-tauri/src/audio/queue.rs` | 212 | Queue management |
+| `src-tauri/src/audio/source.rs` | 193 | symphonia decoder |
+| `src-tauri/src/audio/stream.rs` | 263 | HLS parser + stream cache |
+| `src-tauri/src/drm/locator.rs` | 598 | Find/stage Apple DLLs |
+| `src-tauri/src/drm/loader.rs` | 319 | LoadLibrary |
+| `src-tauri/src/drm/coreaudio.rs` | 233 | CoreAudioToolbox FFI |
+| `src-tauri/src/drm/coremedia.rs` | 198 | CoreMedia FFI |
+| `src-tauri/src/drm/corefp.rs` | 168 | CoreFP FFI |
+| `src-tauri/src/api/client.rs` | 474 | REST API client |
+| `src-tauri/src/api/local_session.rs` | 397 | Cookie import |
+| `src-tauri/src/api/auth.rs` | 166 | Auth manager |
+| `src-tauri/src/library/db.rs` | 399 | SQLite |
+| `src/js/app.js` | 1349 | Frontend |
+| `src/styles/app.css` | 1011 | Theme |

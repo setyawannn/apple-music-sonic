@@ -52,6 +52,10 @@ const state = {
   streamQueue: { base: 0, items: [] },
   streamCurrentId: null,
   queueOpen: false,
+  // The playlist currently open, so its tracks can be refreshed from Apple.
+  openPlaylistId: null,
+  playlistTracks: [],
+  playlistTrackSig: null,
 };
 
 // ─── DOM References ────────────────────────────────────────────
@@ -1037,6 +1041,9 @@ function renderPlaylists() {
 async function showCloudPlaylistDetail(playlistId) {
   const playlist = state.cloudPlaylists.find((p) => p.id === playlistId);
   const name = playlist ? playlist.name : "Playlist";
+  state.openPlaylistId = playlistId;
+  state.playlistTrackSig = null;
+
   mainView.innerHTML = `
     <div class="view-header">
       <div class="view-title">${escapeHtml(name)}</div>
@@ -1046,11 +1053,9 @@ async function showCloudPlaylistDetail(playlistId) {
 
   let tracks = [];
   try {
-    tracks = playlist && playlist.tracks && playlist.tracks.length > 0 ? playlist.tracks : [];
-    if (tracks.length === 0) {
-      tracks = await invoke("get_cloud_playlist_tracks", { playlistId });
-    }
+    tracks = await invoke("get_cloud_playlist_tracks", { playlistId });
   } catch (err) {
+    state.openPlaylistId = null;
     mainView.innerHTML = `
       <div class="view-header">
         <div class="view-title">${escapeHtml(name)}</div>
@@ -1074,13 +1079,13 @@ async function showCloudPlaylistDetail(playlistId) {
       <div class="album-detail-meta">
         <div class="album-detail-kind">Playlist</div>
         <h1 class="album-detail-title">${escapeHtml(name)}</h1>
-        <div class="album-detail-sub">${tracks.length} song${tracks.length === 1 ? "" : "s"}${canEdit ? "" : " · Not editable"}</div>
+        <div class="album-detail-sub"><span id="playlist-sub-count"></span>${canEdit ? "" : " · Not editable"}</div>
         <div class="album-detail-actions">
-          <button class="play-pill" id="pl-play" ${tracks.length ? "" : "disabled"}>
+          <button class="play-pill" id="pl-play">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
             Play
           </button>
-          <button class="play-pill secondary" id="pl-shuffle" ${tracks.length ? "" : "disabled"}>
+          <button class="play-pill secondary" id="pl-shuffle">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
             Shuffle
           </button>
@@ -1088,27 +1093,61 @@ async function showCloudPlaylistDetail(playlistId) {
         </div>
       </div>
     </div>
-    ${
-      tracks.length
-        ? `<div class="track-list">${tracks.map((t, i) => renderCloudTrackRow(t, i + 1)).join("")}</div>`
-        : `
-      <div class="empty-state">
-        <div class="empty-state-title">Empty Playlist</div>
-        <div class="empty-state-desc">Search or browse, then use the + on a song to add it here.</div>
-      </div>`
-    }
+    <div id="playlist-tracks"></div>
   `;
 
+  renderPlaylistTracks(tracks);
+
   document.getElementById("pl-play")?.addEventListener("click", () => {
-    if (tracks.length) playCatalogTracks(tracks, tracks[0].id, false);
+    if (state.playlistTracks.length) playCatalogTracks(state.playlistTracks, state.playlistTracks[0].id, false);
   });
   document.getElementById("pl-shuffle")?.addEventListener("click", () => {
-    const pick = tracks[Math.floor(Math.random() * tracks.length)];
-    playCatalogTracks(tracks, pick?.id, true);
+    const list = state.playlistTracks;
+    const pick = list[Math.floor(Math.random() * list.length)];
+    playCatalogTracks(list, pick?.id, true);
   });
   document.getElementById("pl-menu")?.addEventListener("click", (e) => {
     openPlaylistActionsMenu(e.currentTarget, playlist);
   });
+}
+
+/// Paint (or repaint) the open playlist's track list + count, in place.
+function renderPlaylistTracks(tracks) {
+  state.playlistTracks = tracks;
+  state.playlistTrackSig = tracks.map((t) => t.id).join(",");
+
+  const count = document.getElementById("playlist-sub-count");
+  if (count) count.textContent = `${tracks.length} song${tracks.length === 1 ? "" : "s"}`;
+
+  const play = document.getElementById("pl-play");
+  const shuffle = document.getElementById("pl-shuffle");
+  if (play) play.disabled = tracks.length === 0;
+  if (shuffle) shuffle.disabled = tracks.length === 0;
+
+  const host = document.getElementById("playlist-tracks");
+  if (!host) return;
+  host.innerHTML = tracks.length
+    ? `<div class="track-list">${tracks.map((t, i) => renderCloudTrackRow(t, i + 1)).join("")}</div>`
+    : `
+      <div class="empty-state">
+        <div class="empty-state-title">Empty Playlist</div>
+        <div class="empty-state-desc">Search or browse, then use the + on a song to add it here.</div>
+      </div>`;
+}
+
+/// Re-fetch the open playlist and repaint only if its contents changed. Safe to
+/// call on a timer: it no-ops when no playlist detail is on screen.
+async function refreshOpenPlaylist() {
+  const id = state.openPlaylistId;
+  if (!id || !document.getElementById("playlist-tracks")) return;
+  try {
+    const tracks = await invoke("get_cloud_playlist_tracks", { playlistId: id });
+    if (state.openPlaylistId !== id || !document.getElementById("playlist-tracks")) return;
+    if (tracks.map((t) => t.id).join(",") === state.playlistTrackSig) return;
+    renderPlaylistTracks(tracks);
+  } catch (_err) {
+    // transient; the next tick will try again
+  }
 }
 
 function renderEmpty(title, desc) {
@@ -1661,6 +1700,7 @@ function openPlaylistPicker(trackIds) {
       showToast("Added to playlist.");
       overlay.remove();
       syncCloudPlaylists(); // refresh track counts
+      if (state.openPlaylistId === pick.dataset.pick) refreshOpenPlaylist();
     } catch (err) {
       showToast(String(err), "error");
     }
@@ -2346,10 +2386,14 @@ async function resumeLastSession() {
 window.scanLibrary = scanLibrary;
 
 // Auto-sync: playlists refresh on sign-in, on opening the view, and when the
-// window regains focus. There is no manual Sync button by design.
+// window regains focus. There is no manual Sync button by design. An open
+// playlist also re-polls on a timer so edits made elsewhere show up.
 window.addEventListener("focus", () => {
   if (state.auth.isAuthenticated) syncCloudPlaylists();
+  refreshOpenPlaylist();
 });
+
+setInterval(refreshOpenPlaylist, 30000);
 
 // Initial bootstrap
 checkAuthState().then(() => {

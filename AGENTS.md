@@ -106,8 +106,8 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
   - **Never add `include=tracks` to the list URL** — Apple returns **400** and the playlist list
     silently comes back empty. Tracks are fetched on demand by `get_playlist_tracks`. The list
     carries no `trackCount`, so the UI shows a count only when it knows one. Sync is automatic
-    (on sign-in, on opening the view, on window focus) — there is no Sync button by design.
-    See `docs/04-bugs/05-PLAYLIST-LIST-400.md`.
+    (list on sign-in / view-open / focus; the open playlist re-polls every 30 s) — there is no
+    Sync button by design. See `docs/04-bugs/05-PLAYLIST-LIST-400.md`.
   - **Rename must NOT send `?l=`** (`PUT /v1/me/library/playlists/{id}` with a bare
     `{ "attributes": { "name" } }` body → 204). With the query param Apple returns **500**.
     Create / add-tracks / delete do take `?l=`.

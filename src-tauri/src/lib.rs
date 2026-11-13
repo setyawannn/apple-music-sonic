@@ -324,6 +324,46 @@ const PLAYER_BOOTSTRAP: &str = r#"
         queueLength: m.queue && typeof m.queue.length === 'number' ? m.queue.length : 0
       });
       document.cookie = 'mk_state=' + encodeURIComponent(json) + '; path=/; max-age=300; Secure; SameSite=Lax';
+      publishQueue(m);
+    } catch (e) {}
+  }
+
+  // The Up Next list rides in its own cookie, base64-encoded so quotes/braces do
+  // not blow past the per-cookie size limit. Only the current item and the next 40
+  // are sent, and only when they actually change.
+  var __lastQueueSig = '';
+  function publishQueue(m) {
+    try {
+      var q = m.queue;
+      var items = (q && q.items) ? q.items : q;
+      if (!items || typeof items.length !== 'number') return;
+      var idx = 0;
+      if (q && typeof q.position === 'number') {
+        idx = q.position;
+      } else {
+        var cur = m.nowPlayingItem;
+        if (cur) {
+          for (var k = 0; k < items.length; k++) {
+            if (items[k] && items[k].id === cur.id) { idx = k; break; }
+          }
+        }
+      }
+      var slice = [];
+      for (var j = idx; j < items.length && slice.length < 40; j++) {
+        var it = items[j];
+        var a = (it && it.attributes) || {};
+        slice.push({
+          i: it && it.id ? it.id : null,
+          n: a.name || '',
+          a: a.artistName || '',
+          d: a.durationInMillis || 0
+        });
+      }
+      var sig = idx + '|' + slice.map(function (x) { return x.i; }).join(',');
+      if (sig === __lastQueueSig) return;
+      __lastQueueSig = sig;
+      var payload = btoa(unescape(encodeURIComponent(JSON.stringify({ base: idx, items: slice }))));
+      if (payload) document.cookie = 'mk_queue=' + payload + '; path=/; max-age=300; Secure; SameSite=Lax';
     } catch (e) {}
   }
 
@@ -368,6 +408,7 @@ const PLAYER_BOOTSTRAP: &str = r#"
     if (cmd === 'stop') return m.stop();
     if (cmd === 'seek') return m.seekToTime(Number(arg));
     if (cmd === 'next') return m.skipToNextItem();
+    if (cmd === 'queuejump') return m.changeToMediaAtIndex(Number(arg));
     if (cmd === 'previous') {
       // Apple's own rule: restart the track if we are more than 3s in.
       if (typeof m.currentPlaybackTime === 'number' && m.currentPlaybackTime > 3) {
@@ -557,6 +598,12 @@ async fn stream_seek(app: tauri::AppHandle, position: f64) -> Result<(), String>
     player_command(&app, "seek", Some(position.to_string())).await
 }
 
+/// Jump to an absolute index in MusicKit's queue (used by the Up Next drawer).
+#[tauri::command]
+async fn stream_jump_to(app: tauri::AppHandle, index: u32) -> Result<(), String> {
+    player_command(&app, "queuejump", Some(index.to_string())).await
+}
+
 /// Percent-decode an `encodeURIComponent`-style cookie value (`%7B` → `{`).
 /// Invalid escapes are passed through untouched rather than dropped.
 fn percent_decode(input: &str) -> String {
@@ -577,6 +624,37 @@ fn percent_decode(input: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Decode standard base64 (the form the page's `btoa` produces). `None` on any
+/// invalid character, so a corrupt cookie is dropped rather than half-decoded.
+fn base64_decode(input: &str) -> Option<String> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a') as u32 + 26),
+            b'0'..=b'9' => Some((c - b'0') as u32 + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(input.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for &c in input.as_bytes() {
+        if c == b'=' || c == b'\n' || c == b'\r' {
+            continue;
+        }
+        let v = val(c)?;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xFF) as u8);
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Where the hidden player's last state is remembered between launches.
@@ -606,6 +684,7 @@ fn player_queue_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 fn start_state_poller(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut last = String::new();
+        let mut last_queue = String::new();
         // Throttle disk writes: only when the song changes or playback moves ~5s.
         let mut saved_id = String::new();
         let mut saved_pos = f64::NAN;
@@ -653,6 +732,26 @@ fn start_state_poller(app: tauri::AppHandle) {
             println!("[PLAYER] state {}", json);
             last = json.clone();
             let _ = app.emit("player-state", json);
+
+            // Up Next rides in a second cookie: base64(JSON) with the current item
+            // and the next few. Emit only when the list actually changes.
+            if let Some(queue_json) = jar
+                .iter()
+                .find(|c| c.name() == "mk_queue")
+                .map(|c| c.value().to_string())
+                .and_then(|raw| base64_decode(&raw))
+                .filter(|s| s.starts_with('{'))
+            {
+                if queue_json != last_queue && serde_json::from_str::<serde_json::Value>(&queue_json).is_ok() {
+                    let count = serde_json::from_str::<serde_json::Value>(&queue_json)
+                        .ok()
+                        .and_then(|v| v.get("items").and_then(|i| i.as_array().map(|a| a.len())))
+                        .unwrap_or(0);
+                    println!("[PLAYER] queue items={}", count);
+                    last_queue = queue_json.clone();
+                    let _ = app.emit("player-queue", queue_json);
+                }
+            }
         }
     });
 }
@@ -698,7 +797,19 @@ fn get_last_player_state(app: tauri::AppHandle) -> Result<Option<serde_json::Val
 
 #[cfg(test)]
 mod state_channel_tests {
-    use super::percent_decode;
+    use super::{base64_decode, percent_decode};
+
+    #[test]
+    fn decodes_base64_queue_cookie() {
+        // btoa('{"base":0,"items":[]}') === 'eyJiYXNlIjowLCJpdGVtcyI6W119'
+        let encoded = "eyJiYXNlIjowLCJpdGVtcyI6W119";
+        assert_eq!(base64_decode(encoded).unwrap(), r#"{"base":0,"items":[]}"#);
+    }
+
+    #[test]
+    fn base64_decode_rejects_garbage() {
+        assert!(base64_decode("not base64!!").is_none());
+    }
 
     #[test]
     fn decodes_encoded_json() {
@@ -1221,6 +1332,7 @@ pub fn run() {
             stream_repeat,
             stream_volume,
             get_last_player_state,
+            stream_jump_to,
             // Library
             scan_library,
             get_albums,

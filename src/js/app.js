@@ -48,6 +48,10 @@ const state = {
   // Last session recalled from disk (state + queue); used to restore the bar and
   // to rebuild the queue if the user hits play before choosing anything.
   restore: null,
+  // Up Next: the current item and next few, mirrored from `player-queue`.
+  streamQueue: { base: 0, items: [] },
+  streamCurrentId: null,
+  queueOpen: false,
 };
 
 // ─── DOM References ────────────────────────────────────────────
@@ -66,6 +70,11 @@ const playBtn = $("#play-btn");
 const playIcon = $("#play-icon");
 const playSpinner = $("#play-spinner");
 const toastHost = $("#toast-host");
+const queueBtn = $("#queue-btn");
+const queueCount = $("#queue-count");
+const queueDrawer = $("#queue-drawer");
+const queueDrawerBody = $("#queue-drawer-body");
+const queueCloseBtn = $("#queue-close-btn");
 const prevBtn = $("#prev-btn");
 const nextBtn = $("#next-btn");
 const shuffleBtn = $("#shuffle-btn");
@@ -229,6 +238,9 @@ try {
     } else if (!state.streamPendingId && state.streamPhase !== "loading") {
       state.streamingActive = false;
     }
+    state.streamCurrentId = payload.id || null;
+    // Keep the Up Next highlight in sync without a full re-render of the list.
+    if (state.queueOpen) markQueuePlaying();
     // Re-anchor the local clock so the progress bar stays honest.
     state.streamAnchor = Date.now() - state.streamPosition * 1000;
     state.streamShuffle = !!payload.shuffle;
@@ -272,6 +284,22 @@ try {
   });
 } catch (err) {
   console.warn("Could not register player-state listener:", err);
+}
+
+// The Up Next list arrives on its own event, base64-decoded by Rust.
+try {
+  listen("player-queue", (event) => {
+    let payload = event?.payload;
+    if (typeof payload === "string") {
+      try { payload = JSON.parse(payload); } catch (_) { return; }
+    }
+    if (!payload || !Array.isArray(payload.items)) return;
+    state.streamQueue = { base: payload.base || 0, items: payload.items };
+    updateQueueBadge();
+    if (state.queueOpen) renderQueue();
+  });
+} catch (err) {
+  console.warn("Could not register player-queue listener:", err);
 }
 
 authBtn?.addEventListener("click", () => {
@@ -1622,6 +1650,82 @@ function showToast(message, kind = "info", ttl = 6000) {
   }, ttl);
 }
 
+// ─── Up Next drawer ────────────────────────────────────────────
+
+function updateQueueBadge() {
+  if (!queueCount) return;
+  const n = state.streamQueue.items.length;
+  if (n > 1) {
+    queueCount.textContent = String(n);
+    queueCount.style.display = "block";
+  } else {
+    queueCount.style.display = "none";
+  }
+}
+
+function markQueuePlaying() {
+  if (!queueDrawerBody) return;
+  queueDrawerBody.querySelectorAll(".queue-row").forEach((el) => {
+    el.classList.toggle(
+      "playing",
+      !!state.streamCurrentId && el.dataset.queueId === state.streamCurrentId
+    );
+  });
+}
+
+function renderQueue() {
+  if (!queueDrawerBody) return;
+  const items = state.streamQueue.items;
+  if (!items.length) {
+    queueDrawerBody.innerHTML =
+      `<div class="queue-empty">Nothing is queued. Play an album, playlist or song to see Up Next.</div>`;
+    return;
+  }
+  queueDrawerBody.innerHTML = items
+    .map((it, i) => {
+      const playing = !!state.streamCurrentId && it.i === state.streamCurrentId;
+      return `
+        <div class="queue-row ${playing ? "playing" : ""}" data-queue-id="${it.i || ""}" data-queue-index="${state.streamQueue.base + i}">
+          <div class="queue-row-index">${playing ? "▶" : i + 1}</div>
+          <div class="queue-row-info">
+            <div class="queue-row-title">${escapeHtml(it.n || "Unknown Title")}</div>
+            <div class="queue-row-artist">${escapeHtml(it.a || "")}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function setQueueOpen(open) {
+  state.queueOpen = open;
+  if (!queueDrawer) return;
+  queueDrawer.classList.toggle("open", open);
+  queueDrawer.setAttribute("aria-hidden", open ? "false" : "true");
+  if (open) {
+    renderQueue();
+    updateQueueBadge();
+  }
+}
+
+queueBtn?.addEventListener("click", () => setQueueOpen(!state.queueOpen));
+queueCloseBtn?.addEventListener("click", () => setQueueOpen(false));
+
+// Jumping to a row skips MusicKit to that absolute queue position.
+queueDrawerBody?.addEventListener("click", async (e) => {
+  const row = e.target.closest(".queue-row");
+  if (!row) return;
+  const index = parseInt(row.dataset.queueIndex, 10);
+  if (!Number.isFinite(index)) return;
+  try {
+    await invoke("stream_jump_to", { index });
+    setQueueOpen(false);
+  } catch (err) {
+    console.error("Jump to queue item failed:", err);
+    showToast("Couldn't jump to that track.", "error");
+  }
+});
+
 // Repaint shuffle/repeat/volume from the hidden player's own state, so the
 // buttons show what Apple Music is doing rather than a local guess.
 function paintStreamControls() {
@@ -1891,6 +1995,11 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (authModal && authModal.style.display !== "none") return;
+
+  if (e.key === "Escape" && state.queueOpen) {
+    setQueueOpen(false);
+    return;
+  }
 
   const meta = e.metaKey || e.ctrlKey;
 

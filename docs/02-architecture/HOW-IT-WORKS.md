@@ -73,6 +73,7 @@ UI never sits empty while the player wakes up.
 `PLAYER_BOOTSTRAP` (an initialization script) runs at document start in the hidden webview:
 
 ```js
+if (window.top !== window.self) return;  // top frame only — see below
 window.__mkReady  = new Promise(res => window.__mkResolve = res);  // resolves when MusicKit exists
 window.__mkQueue  = [];                                           // survives page load
 window.__mkDo     = async (cmd, arg, nonce) => {
@@ -114,6 +115,12 @@ Two design points worth keeping:
 - **The nonce makes re-delivery idempotent.** Clicking the same song twice sends two
   different nonces, so repeat clicks work; re-delivering one command sends the same nonce,
   so it runs once.
+- **It runs in the top frame only.** On Windows, wry injects an `initialization_script` into
+  every frame (`for_main_frame_only` is ignored). `music.apple.com`'s subframes would each run
+  their own MusicKit instance — with no queue but a shared persisted volume — and publish an
+  empty `mk_state` that fights the real one, flickering the UI. The guard
+  `if (window.top !== window.self) return;` is the first line, before anything else. See
+  `docs/04-bugs/07-SUBFRAME-STATE-FLICKER.md`.
 
 ### 4. PlayReady does the rest
 

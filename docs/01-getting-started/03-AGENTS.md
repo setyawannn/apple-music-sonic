@@ -113,6 +113,15 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
   - **Never rebuild the now-playing `<img>` (or any node) on every `player-state` tick** — it
     fires ~once a second while playing, and re-setting `innerHTML` makes the art flicker. Guard
     it with `state.streamArtworkUrl`. See `docs/04-bugs/06-AUTOREFRESH-FLICKER.md`.
+- **`PLAYER_BOOTSTRAP` must stay top-frame-only.** On Windows, Tauri/wry injects an
+  `initialization_script` into **every frame** (`for_main_frame_only` is ignored there), and
+  `music.apple.com`'s subframes each get their own MusicKit instance with no queue that shares
+  the persisted volume — so an unguarded subframe publishes an empty `mk_state` that fights the
+  real one and flickers the UI. The bootstrap starts with `if (window.top !== window.self) return;`.
+  See `docs/04-bugs/07-SUBFRAME-STATE-FLICKER.md`.
+- **A null-id `player-state` is a blip, not truth.** The frontend debounces empty reports (clears
+  the bar only after 1.5 s with no real report), because MusicKit briefly reports no item even
+  for the top frame. `applyPlayerState` / `clearNowPlayingUI` in `app.js`.
   - **Rename must NOT send `?l=`** (`PUT /v1/me/library/playlists/{id}` with a bare
     `{ "attributes": { "name" } }` body → 204). With the query param Apple returns **500**.
     Create / add-tracks / delete do take `?l=`.
@@ -169,7 +178,8 @@ docs/
 │   ├── 03-PLAYER-STATE-CHANNEL.md← Cookie state channel (fixed; CSP + title route dead)
 │   ├── 04-PROGRESS-BAR-SEEK.md   ← Seek hit the wrong player (fixed)
 │   ├── 05-PLAYLIST-LIST-400.md   ← Playlists invisible: `include=tracks` → 400 (fixed)
-│   └── 06-AUTOREFRESH-FLICKER.md ← Timer repaint + artwork rebuild flickered playback (fixed)
+│   ├── 06-AUTOREFRESH-FLICKER.md ← Timer repaint + artwork rebuild flickered playback (fixed)
+│   └── 07-SUBFRAME-STATE-FLICKER.md ← Bootstrap ran in every frame → empty state fights real (fixed)
 └── 05-reference/                 ← Decode reports, API contracts (see README there)
 ```
 

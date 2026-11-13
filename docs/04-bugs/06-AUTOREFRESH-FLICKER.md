@@ -1,6 +1,8 @@
 # Bug 06 — Now-playing art and playlist rows flicker during playback
 
 > Status: **fixed** (2026-11-13)
+> Follow-up: the *dominant* flicker was actually a subframe publishing an empty state —
+> see `07-SUBFRAME-STATE-FLICKER.md`. This bug fixed separate, real repaint problems.
 > Symptom: while a song played, the now-playing artwork (and the playlist's "playing" row)
 > flickered, roughly once a second. Reported as "auto refresh makes my song flicker".
 

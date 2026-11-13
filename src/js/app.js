@@ -180,8 +180,9 @@ try {
   console.warn("Could not register auth-success listener:", err);
 }
 
-// Streamed playback runs inside the hidden player webview, which reports its
-// state over a loopback channel (Tauri IPC is unavailable on apple.com).
+// Streamed playback runs inside the hidden player webview. Its CSP blocks loopback
+// fetch and Tauri IPC is unavailable on remote origins, so it publishes state through
+// the `mk_state` cookie and Rust re-emits it here as `player-state`.
 try {
   listen("player-state", (event) => {
     let payload = event?.payload;
@@ -1206,6 +1207,24 @@ progressBar?.addEventListener("click", async (e) => {
   const rect = progressBar.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const pct = Math.max(0, Math.min(1, x / rect.width));
+
+  // Streaming owns the bar while a stream is active — the local engine is idle.
+  if (state.streamingActive) {
+    const total = state.streamDuration || 0;
+    if (!(total > 0)) return; // duration unknown yet; ignore instead of snapping to 0
+    const target = pct * total;
+    state.streamPosition = target;
+    state.streamAnchor = Date.now() - target * 1000;
+    progressFill.style.width = `${pct * 100}%`;
+    currentTime.textContent = formatTime(target);
+    try {
+      await invoke("stream_seek", { position: target });
+    } catch (err) {
+      console.error("Stream seek failed:", err);
+    }
+    return;
+  }
+
   progressFill.style.width = `${pct * 100}%`;
   const targetSecs = pct * (state.playback.duration || 0);
   try {
@@ -1242,8 +1261,9 @@ document.getElementById("volume-btn")?.addEventListener("click", async () => {
 // ─── Continuous Playback Synchronization ───────────────────────
 async function syncPlaybackStatus() {
   try {
-    // Streaming runs in the hidden Apple player. The page's CSP blocks our
-    // loopback channel, so its UI state is tracked locally instead.
+    // Streaming runs in the hidden Apple player. Its real state (playing, position,
+    // duration) arrives via the `player-state` event; the local clock only smooths
+    // the gaps between reports.
     if (state.streamingActive) {
       const icon = state.streamIsPlaying
         ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z"

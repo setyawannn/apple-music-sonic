@@ -275,11 +275,6 @@ async fn validate_music_user_token(dev_token: &str, user_token: &str) -> bool {
     }
 }
 
-#[tauri::command]
-fn probe_report(data: String) {
-    println!("[PROBE] {}", data);
-}
-
 // ─── Full-song streaming player ─────────────────────────────────────
 //
 // The license challenge Apple requires can only be produced by a PlayReady CDM,
@@ -288,23 +283,9 @@ fn probe_report(data: String) {
 // Windows' PlayReady CDM does the DRM; we only drive the player and read state.
 
 const PLAYER_LABEL: &str = "player";
-const PLAYER_STATE_PORT: u16 = 38471;
-
-/// Last state blob seen on the loopback channel, to log transitions only.
-static LAST_PLAYER_STATE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-/// Set by the hidden page once MusicKit is live. Commands never poll for it:
-/// they queue inside the page and this flag only gates the one re-eval.
-static PLAYER_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static PLAYER_READY_SIGNAL: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
-
-fn player_ready_signal() -> &'static tokio::sync::Notify {
-    PLAYER_READY_SIGNAL.get_or_init(tokio::sync::Notify::new)
-}
 
 const PLAYER_BOOTSTRAP: &str = r#"
 (function () {
-  var PORT = 38471;
   window.__mkReady = new Promise(function (res) { window.__mkResolve = res; });
   window.__mkQueue = window.__mkQueue || [];
 
@@ -318,18 +299,17 @@ const PLAYER_BOOTSTRAP: &str = r#"
     return false;
   }
 
-  // Tells Rust the page can accept commands. Replaces the old blind retry loop.
-  function signalReady() {
-    fetch('http://127.0.0.1:' + PORT + '/ready', { method: 'POST', mode: 'no-cors', body: '1' }).catch(function () {});
-  }
-
-  function report() {
+  // State leaves the page through a cookie. music.apple.com's CSP blocks fetch()
+  // to 127.0.0.1, and WebView2 does not mirror document.title to the native
+  // window title, but `document.cookie` is first-party and CSP-immune. Rust polls
+  // the webview cookie jar (the same API the sign-in flow uses) and re-emits the
+  // value as `player-state`.
+  function publish() {
     try {
       var m = window.MusicKit.getInstance();
       var item = m.nowPlayingItem || null;
       var attrs = (item && item.attributes) || null;
-      var body = JSON.stringify({
-        playbackState: m.playbackState,
+      var json = JSON.stringify({
         isPlaying: !!m.isPlaying,
         position: m.currentPlaybackTime || 0,
         duration: m.currentPlaybackDuration || 0,
@@ -338,7 +318,7 @@ const PLAYER_BOOTSTRAP: &str = r#"
         artist: attrs ? attrs.artistName : null,
         artwork: attrs && attrs.artwork ? attrs.artwork.url : null
       });
-      fetch('http://127.0.0.1:' + PORT + '/state', { method: 'POST', mode: 'no-cors', body: body }).catch(function () {});
+      document.cookie = 'mk_state=' + encodeURIComponent(json) + '; path=/; max-age=300; Secure; SameSite=Lax';
     } catch (e) {}
   }
 
@@ -362,7 +342,7 @@ const PLAYER_BOOTSTRAP: &str = r#"
 
   function run(job) {
     window.__mkDo(job.cmd, job.arg, job.nonce)
-      .then(report)
+      .then(publish)
       .catch(function (e) { console.error('mk', e); });
   }
 
@@ -374,13 +354,12 @@ const PLAYER_BOOTSTRAP: &str = r#"
   };
 
   window.__mkReady.then(function (m) {
-    signalReady();
-    // Report on real player transitions instead of waiting for the next tick.
+    // Publish on real player transitions instead of waiting for the next tick.
     ['playbackStateDidChange', 'nowPlayingItemDidChange', 'playbackTimeDidChange'].forEach(function (name) {
-      try { m.addEventListener(name, report); } catch (e) {}
+      try { m.addEventListener(name, publish); } catch (e) {}
     });
-    report();
-    setInterval(report, 250);
+    publish();
+    setInterval(publish, 500);
   });
 
   if (!got()) {
@@ -408,7 +387,6 @@ fn ensure_player(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String>
         .map_err(|e| e.to_string())?
         .join("auth_profile");
     let _ = std::fs::create_dir_all(&profile);
-    PLAYER_READY.store(false, std::sync::atomic::Ordering::SeqCst);
 
     let url: tauri::Url = "https://music.apple.com/id/"
         .parse()
@@ -431,15 +409,12 @@ fn ensure_player(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String>
         .map_err(|e| e.to_string())
 }
 
-/// Drive the hidden player without polling.
-///
-/// The page owns a command queue, so a command issued before MusicKit is live is
-/// simply parked and executed the moment the player resolves. One eval is enough
-/// in the normal case. The only retry happens if the page had not reported ready
-/// yet, and it waits on that signal instead of sleeping.
+/// Drive the hidden player. Dispatch and return: the page owns a command queue, so
+/// a command issued before MusicKit is live is parked and executed the moment the
+/// player resolves. There is no readiness handshake and no retry, by design — the
+/// old "wait for /ready" loop could never be satisfied because music.apple.com's
+/// CSP blocks loopback fetches.
 async fn player_command(app: &tauri::AppHandle, cmd: &str, arg: Option<String>) -> Result<(), String> {
-    use std::sync::atomic::Ordering;
-
     let window = ensure_player(app)?;
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -451,30 +426,10 @@ async fn player_command(app: &tauri::AppHandle, cmd: &str, arg: Option<String>) 
         "(function(j){{ (window.__mkQueue = window.__mkQueue || []).push(j);          if (window.__mkDrain) window.__mkDrain(); }})({});",
         job
     );
-    let dispatch = |w: &tauri::WebviewWindow| w.eval(&js).map_err(|e| e.to_string());
 
-    dispatch(&window)?;
+    window.eval(&js).map_err(|e| e.to_string())?;
     println!("[PLAYER] cmd={} nonce={}", cmd, nonce);
-    if PLAYER_READY.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-
-    // Page has not loaded MusicKit yet (cold start with pre-warm disabled, or a
-    // reload). Wait on the ready signal, then hand the command over once more.
-    // The nonce makes the second dispatch a no-op if the first one already ran.
-    let ready = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        player_ready_signal().notified(),
-    )
-    .await;
-
-    if ready.is_err() {
-        return Err("player did not become ready within 30s".to_string());
-    }
-    if app.get_webview_window(PLAYER_LABEL).is_none() {
-        return Err("player window closed".to_string());
-    }
-    dispatch(&window)
+    Ok(())
 }
 
 #[tauri::command]
@@ -502,72 +457,98 @@ async fn stream_seek(app: tauri::AppHandle, position: f64) -> Result<(), String>
     player_command(&app, "seek", Some(position.to_string())).await
 }
 
-/// Tiny loopback endpoint the hidden player POSTs its state to. Tauri's IPC is
-/// unavailable on remote origins, so this is the only reliable channel back.
-fn start_state_listener(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", PLAYER_STATE_PORT)).await {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("[PLAYER] state listener bind failed on {}: {}", PLAYER_STATE_PORT, e);
-                return;
+/// Percent-decode an `encodeURIComponent`-style cookie value (`%7B` → `{`).
+/// Invalid escapes are passed through untouched rather than dropped.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
             }
-        };
-        println!("[PLAYER] state listener on 127.0.0.1:{}", PLAYER_STATE_PORT);
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
 
+/// Forwards the hidden player's state to the UI.
+///
+/// The page writes a compact JSON blob into the `mk_state` cookie. Nothing else
+/// about the page can reach us: music.apple.com's CSP blocks loopback `fetch()`,
+/// WebView2 does not mirror `document.title` to the native window title, and
+/// Tauri IPC is unavailable on remote origins. `document.cookie` is first-party
+/// and CSP-immune, and `window.cookies()` is the same API the sign-in flow uses
+/// to pull `media-user-token` — so it is known to work on this webview.
+fn start_state_poller(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut last = String::new();
         loop {
-            let Ok((mut sock, _)) = listener.accept().await else {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+            let Some(window) = app.get_webview_window(PLAYER_LABEL) else {
+                // Player closed; forget the last blob so a rebuild re-emits state.
+                last.clear();
                 continue;
             };
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                let mut buf = vec![0u8; 16384];
-                let n = sock.read(&mut buf).await.unwrap_or(0);
-                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let Ok(jar) = window.cookies() else { continue };
+            let Some(raw) = jar.iter().find(|c| c.name() == "mk_state").map(|c| c.value().to_string())
+            else {
+                continue;
+            };
 
-                // The page reports readiness once MusicKit is live; commands wait on this.
-                if request.lines().next().map_or(false, |l| l.starts_with("POST /ready")) {
-                    PLAYER_READY.store(true, std::sync::atomic::Ordering::SeqCst);
-                    player_ready_signal().notify_waiters();
-                    println!("[PLAYER] ready");
-                    let _ = sock
-                        .write_all(
-                            b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                        )
-                        .await;
-                    return;
-                }
+            // WebView2 may hand back the value already decoded; accept either form.
+            let json = if raw.starts_with('{') {
+                raw
+            } else {
+                percent_decode(&raw)
+            };
+            if !json.starts_with('{') || json == last {
+                continue;
+            }
+            if serde_json::from_str::<serde_json::Value>(&json).is_err() {
+                continue;
+            }
 
-                if request.lines().next().map_or(false, |l| l.starts_with("POST /debug")) {
-                    if let Some(idx) = request.find("\r\n\r\n") {
-                        println!("[PLAYER] debug {}", request[idx + 4..].trim());
-                    }
-                    let _ = sock.write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                    return;
-                }
-
-                if let Some(idx) = request.find("\r\n\r\n") {
-                    let body = request[idx + 4..].trim().to_string();
-                    if !body.is_empty() {
-                        {
-                            let mut last = LAST_PLAYER_STATE.lock().unwrap();
-                            if last.as_deref() != Some(body.as_str()) {
-                                println!("[PLAYER] state {}", body);
-                                *last = Some(body.clone());
-                            }
-                        }
-                        let _ = app.emit("player-state", body);
-                    }
-                }
-                let _ = sock
-                    .write_all(
-                        b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    )
-                    .await;
-            });
+            println!("[PLAYER] state {}", json);
+            last = json.clone();
+            let _ = app.emit("player-state", json);
         }
     });
+}
+
+#[cfg(test)]
+mod state_channel_tests {
+    use super::percent_decode;
+
+    #[test]
+    fn decodes_encoded_json() {
+        let json = r#"{"isPlaying":true,"position":12.5}"#;
+        let encoded: String = json
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() {
+                    (b as char).to_string()
+                } else {
+                    format!("%{:02X}", b)
+                }
+            })
+            .collect();
+        assert_eq!(percent_decode(&encoded), json);
+    }
+
+    #[test]
+    fn leaves_invalid_escapes_alone() {
+        assert_eq!(percent_decode("100%25 %zz %"), "100% %zz %");
+        assert_eq!(percent_decode("plain"), "plain");
+    }
 }
 
 #[tauri::command]
@@ -593,6 +574,21 @@ async fn start_apple_sign_in(app: tauri::AppHandle, state: State<'_, AppState>) 
         .app_local_data_dir()
         .map_err(|e| e.to_string())?
         .join("auth_profile");
+
+    // The hidden player runs on this same profile. Wiping it underneath a live
+    // webview leaves the player holding a destroyed session, so close it first;
+    // ensure_player() rebuilds it against the fresh profile when needed.
+    if let Some(player) = app.get_webview_window(PLAYER_LABEL) {
+        let _ = player.close();
+        // Give WebView2 a moment to release its lock on the profile directory.
+        for _ in 0..20 {
+            if app.get_webview_window(PLAYER_LABEL).is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     let _ = std::fs::remove_dir_all(&auth_profile);
     std::fs::create_dir_all(&auth_profile).map_err(|e| e.to_string())?;
 
@@ -665,6 +661,11 @@ async fn start_apple_sign_in(app: tauri::AppHandle, state: State<'_, AppState>) 
             let _ = app_handle.emit("auth-success", auth_state);
             if let Some(w) = app_handle.get_webview_window("apple_auth") {
                 let _ = w.close();
+            }
+
+            // Pre-warm the player on the fresh profile so the next click streams.
+            if let Err(e) = ensure_player(&app_handle) {
+                eprintln!("[AUTH] player re-warm failed: {}", e);
             }
             return;
         }
@@ -999,31 +1000,12 @@ pub fn run() {
                     let _ = mw.set_focus();
                     println!("[SETUP] After show: is_visible: {:?}", mw.is_visible());
 
-                    // Hidden PlayReady-backed player state channel.
-                    start_state_listener(app.handle().clone());
-
-                    // Pre-warm the hidden player: paying the page load here, while the
-                    // user is browsing, is what keeps the first click instant.
+                    // Start forwarding the hidden player's state to the UI, then
+                    // pre-warm the player: paying the page load here, while the user
+                    // is browsing, is what keeps the first click instant.
+                    start_state_poller(app.handle().clone());
                     if let Err(e) = ensure_player(app.handle()) {
                         eprintln!("[SETUP] player pre-warm failed: {}", e);
-                    } else {
-                        let probe = app.handle().clone();
-                        tauri::async_runtime::spawn(async move {
-                            for i in 0..4 {
-                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                let ready = PLAYER_READY.load(std::sync::atomic::Ordering::SeqCst);
-                                let url = probe
-                                    .get_webview_window(PLAYER_LABEL)
-                                    .and_then(|w| w.url().ok())
-                                    .map(|u| u.to_string())
-                                    .unwrap_or_else(|| "none".into());
-                                println!("[PLAYER] probe {}s ready={} url={}", (i + 1) * 5, ready, url);
-                                if !ready {
-                                    let diag = "fetch('http://127.0.0.1:38471/debug',{method:'POST',mode:'no-cors',body:JSON.stringify({mk:typeof window.MusicKit,getinst:(window.MusicKit&&typeof window.MusicKit.getInstance),mkdo:typeof window.__mkDo,q:(window.__mkQueue||[]).length,rs:document.readyState,href:location.href})}).catch(function(){});";
-                                    let _ = probe.get_webview_window(PLAYER_LABEL).map(|w| w.eval(diag));
-                                }
-                            }
-                        });
                     }
 
                     // The hidden player is a real window, so Tauri would keep the app
@@ -1055,8 +1037,6 @@ pub fn run() {
             api_client,
         })
         .invoke_handler(tauri::generate_handler![
-            // Diagnostics
-            probe_report,
             // Streaming player
             stream_play,
             stream_pause,

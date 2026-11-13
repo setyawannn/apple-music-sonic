@@ -17,7 +17,7 @@
                            │  invoke() / listen()
 ┌──────────────────────────▼──────────────────────────────────────────┐
 │ Tauri command layer — src-tauri/src/lib.rs                            │
-│   53 commands, window lifecycle, event emit                          │
+│   54 commands, window lifecycle, event emit                          │
 └──────┬───────────────────┬──────────────────────┬───────────────────┘
        │                   │                      │
 ┌──────▼──────┐   ┌────────▼─────────┐   ┌────────▼──────────────────┐
@@ -55,7 +55,8 @@ state = {
               isShuffle, repeatMode },                   // PARKED local player
   streamingActive, streamIsPlaying, streamPosition, streamDuration, streamAnchor,
   streamShuffle, streamRepeat, streamVolume, streamQueueLength,  // hidden player
-  streamPhase, restore                                          // transport state machine + last session
+  streamPhase, restore,                                         // transport state machine + last session
+  streamQueue, streamCurrentId, queueOpen                       // Up Next drawer
 }
 ```
 
@@ -80,6 +81,7 @@ MusicKit's own state. The local fork remains a wart until the parked engine is f
 | Track loading / failure | `streamPhase` idle→loading→playing/paused/error; spinner + toast; 12 s watchdog |
 | Launch | `get_last_player_state` → repaint bar paused, keep queue; first play rebuilds it |
 | Keyboard | Space / arrows / `M` → same handlers as the transport buttons |
+| Up Next drawer | page `mk_queue` cookie (base64) → `start_state_poller` → `player-queue`; click → `stream_jump_to` → `changeToMediaAtIndex` |
 | Album detail | `get_catalog_album` → header + Play/Shuffle queue |
 | Search | `invoke("search_catalog")` → `amp-api.music.apple.com` |
 | Load Listen Now | `get_recommendations` |
@@ -92,7 +94,7 @@ MusicKit's own state. The local fork remains a wart until the parked engine is f
 ### Not wired yet
 
 Radio stations (needs Apple's stations API) · `sync_cloud_library` (registered, no UI) ·
-lyrics / queue drawer / downloads (out of scope). See
+lyrics / downloads (out of scope). See
 `docs/03-implementation/02-WHATS-MISSING.md`.
 
 ## Concurrency model

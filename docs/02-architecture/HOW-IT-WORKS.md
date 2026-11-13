@@ -227,6 +227,25 @@ returns them together. On launch `restoreLastSession()` repaints the bar **pause
 Music does not auto-play on launch) and keeps the queue; the first press of play rebuilds the
 queue via `stream_play` and seeks back to the saved position.
 
+## Up Next — the queue drawer
+
+`m.queue` can be thousands of items, and JSON's quotes/braces would blow WebView2's per-cookie
+limit, so the page publishes only the current item plus the next 40, **base64-encoded**, in a
+second cookie `mk_queue`, and only when the list actually changes:
+
+```js
+document.cookie = 'mk_queue=' + btoa(unescape(encodeURIComponent(json))) + '; path=/; …';
+```
+
+`start_state_poller` decodes it (`base64_decode`) and emits `player-queue`. The `#queue-btn`
+badge shows the length; the drawer renders each row and highlights the current `id` from
+`player-state`. Clicking a row invokes `stream_jump_to`, which runs
+`m.changeToMediaAtIndex(index)` — an absolute MusicKit queue index (the drawer's `base` plus
+the row offset). Verified live: `[PLAYER] queue items=5` after playback started.
+
+The queue list is intentionally sliced from the *current* position: that is what "Up Next"
+means, and it keeps the payload small. Previous items reappear as you skip back.
+
 The old design — a loopback TCP listener on `127.0.0.1:38471` with a `/ready` handshake and a
 30 s command timeout — was deleted: it never received a single packet, and the timeout made the
 play icon flip back after 30 s. History and evidence: `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md`.
@@ -255,11 +274,11 @@ player after a successful sign-in.
 
 ---
 
-## Command surface (53 commands)
+## Command surface (54 commands)
 
 | Group | Count | Commands |
 |-------|-------|----------|
-| Streaming player | 11 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek`, `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume`, `get_last_player_state` |
+| Streaming player | 12 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek`, `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume`, `get_last_player_state`, `stream_jump_to` |
 | Apple Music API + auth | 15 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `play_stream_track` |
 | Native bridge + diagnostics | 3 | `get_native_bridge_status`, `import_local_apple_session`, `run_native_bridge_diagnostics` |
 | **Parked** local playback | 12 | `play_track`, `play_album`, `pause_playback`, `resume_playback`, `stop_playback`, `seek_to`, `set_volume`, `get_playback_status`, `next_track`, `prev_track`, `set_repeat_mode`, `set_shuffle` |
@@ -285,7 +304,7 @@ not part of the product.
 ## Known limits (not bugs, just ceilings)
 
 - AAC 256 kbps maximum; no lossless, no Atmos.
-- Apple UI features not implemented: lyrics, queue drawer, downloads, radio stations.
+- Apple UI features not implemented: lyrics, downloads, radio stations.
 - Single window, single account, Windows only.
 
 ---
@@ -294,13 +313,13 @@ not part of the product.
 
 | Path | Lines | Role |
 |------|-------|------|
-| `src-tauri/src/lib.rs` | 1,273 | 53 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish), `ensure_player`, `player_command`, `start_state_poller` (state + restore persistence), auth windows, lifecycle |
+| `src-tauri/src/lib.rs` | 1,385 | 54 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish + Up Next), `ensure_player`, `player_command`, `start_state_poller` (state + restore persistence), `base64_decode`, auth windows, lifecycle |
 | `src-tauri/src/api/client.rs` | 474 | REST: search, suggestions, album, charts, library, playlists |
 | `src-tauri/src/api/local_session.rs` | 397 | WebView2 cookie import |
 | `src-tauri/src/api/auth.rs` | 166 | Developer token, session persistence, storefront |
 | `src-tauri/src/api/models.rs` | 101 | Store models |
-| `src/js/app.js` | 2,118 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, keyboard shortcuts, resume) |
-| `src/styles/app.css` | 1,174 | Apple-style dark theme |
+| `src/js/app.js` | 2,233 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, keyboard shortcuts, resume) |
+| `src/styles/app.css` | 1,286 | Apple-style dark theme |
 | `index.html` | 176 | Shell: sidebar, main view, playback bar |
 | `src-tauri/src/audio/**`, `library/**` | 2,077 | **PARKED** local engine + library |
 | `src-tauri/src/drm/**` | 1,538 | **ABANDONED** native decrypt attempt |

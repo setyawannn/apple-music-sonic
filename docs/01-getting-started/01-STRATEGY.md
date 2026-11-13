@@ -76,6 +76,7 @@ decoder, and EME output cannot be read as PCM). Lossless is out of reach on this
 | Browse tab | ✅ works (Top Albums / Top Songs) |
 | Loading spinner / error toast / resume on launch | ✅ works |
 | Keyboard shortcuts | ✅ works (Space, arrows, `M`) |
+| Up Next queue drawer | ✅ works (click to jump) |
 | Windows media keys | ❌ not bound |
 | Radio stations | ❌ needs Apple's stations API |
 | Local file playback | ⏸ parked |
@@ -106,9 +107,9 @@ Play/Shuffle; cloud playlists open and play; the welcome screen offers sign-in i
 folder scan; Browse shows the charts.
 
 **P3 — Polish. 🚧 IN PROGRESS (2026-11-13).**
-Loading spinner and error toast (transport state machine), resume-last-song on launch, and
-in-app keyboard shortcuts are in. Windows media keys, a Now Playing view and the queue drawer
-remain.
+Loading spinner and error toast (transport state machine), resume-last-song on launch, in-app
+keyboard shortcuts and the Up Next queue drawer are in. Windows media keys and a full-screen
+Now Playing view remain.
 
 **P4 — Revisit parked work.**
 Decide: develop local file playback, or delete it. Only after P0–P3.

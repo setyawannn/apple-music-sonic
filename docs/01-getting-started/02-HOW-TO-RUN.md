@@ -64,7 +64,7 @@ needed.
 
 - **Media keys are not bound.** In-app shortcuts work (Space, arrows, `M`), but the hardware
   media keys need a native hook. (P3)
-- **No Now Playing view or queue drawer yet.** The bar shows the queue length but not the queue.
+- **No full-screen Now Playing view yet.** The Up Next drawer is in the transport bar, though.
 - **Radio** is an honest placeholder: live stations need Apple's stations API.
 - **The playback bar lags reality by up to ~250 ms.** The player publishes state on events
   and on a timer; the frontend smooths between reports.

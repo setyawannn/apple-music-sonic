@@ -76,8 +76,8 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Resume last track/queue on launch | ✅ state live-verified; queue rebuild compile-verified |
 | Keyboard shortcuts (Space, arrows, `M`) | ✅ |
 | Windows media keys | ❌ |
+| Up Next queue drawer (with jump-to-item) | ✅ |
 | Now Playing full-screen view | ❌ |
-| Queue drawer | ❌ |
 | Lyrics | ❌ |
 | Settings panel | ❌ |
 
@@ -133,5 +133,5 @@ command queue, the cookie poller, or the frontend. Verification for those is a d
 
 The app is a working Apple Music player whose interface matches what the player is doing:
 the queue is the list you clicked, and the transport bar reports MusicKit's own state.
-P3 is underway: loading/error states, keyboard shortcuts and resume-on-launch are in;
-media keys, a Now Playing view and the queue drawer remain.
+P3 is well underway: loading/error states, keyboard shortcuts, resume-on-launch and the Up Next
+queue drawer are in; media keys and a full Now Playing view remain.

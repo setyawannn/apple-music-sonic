@@ -17,13 +17,12 @@ they need a global shortcut plugin or a native hook, not a WebView2 key handler.
 **Fix.** Add `tauri-plugin-global-shortcut` and bind MediaPlayPause / MediaNextTrack /
 MediaPrevTrack, or register a Win32 hotkey.
 
-## Gap 2 — Now Playing view and queue drawer (P3)
+## Gap 2 — Now Playing view (P3)
 
-Apple's full-screen Now Playing and the "Up Next" drawer are not built. The transport bar
-shows the queue length but not the queue.
+Apple's full-screen Now Playing is not built (the Up Next queue drawer **is**: see the closed
+table). The transport bar shows the queue length and opens the drawer.
 
-**Fix.** A Now Playing view driven by the existing `player-state`, and a drawer listing the
-queue (`m.queue`).
+**Fix.** A Now Playing view driven by the existing `player-state` plus the `mk_queue` items.
 
 ## Gap 3 — Radio has no backend (P3)
 
@@ -64,6 +63,7 @@ otherwise.
 | Loading/error surface (P3) | Failed songs flipped the icon silently | `streamPhase` state machine, play-button spinner, error toast, 12 s watchdog |
 | Resume on launch (P3) | Only the session survived a restart | `player_state.json` + `player_queue.json`; bar restores paused, play rebuilds the queue |
 | Keyboard (P3) | Mouse only | Space / arrows / `M` (media keys still open) |
+| Queue drawer (P3) | Queue length shown, contents hidden | `mk_queue` cookie (base64) → `player-queue`; Up Next drawer with click-to-jump (verified live: `items=5`) |
 
 ## Out of scope (deliberately)
 

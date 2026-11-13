@@ -25,6 +25,7 @@ matches what the player is actually doing.
 | Cloud playlists | ✅ works |
 | Loading spinner, error toast, resume-on-launch | ✅ works |
 | Keyboard shortcuts (Space, arrows, `M`) | ✅ works |
+| Up Next queue drawer (click to jump) | ✅ works |
 | Radio stations | ❌ not wired (needs Apple's stations API) |
 | Local file playback | ⏸ parked — see `docs/03-implementation/04-PARKED-LOCAL-PLAYBACK.md` |
 | Lossless / Atmos | ⛔ out of reach on this architecture (AAC 256 ceiling) |
@@ -75,7 +76,7 @@ Production binary: `src-tauri/target/release/app.exe` (~20 MB).
 index.html                  UI shell (sidebar, main view, playback bar)
 src/js/app.js               UI logic and Tauri command calls
 src/styles/app.css          Apple-style dark theme
-src-tauri/src/lib.rs        53 Tauri commands, hidden player, cookie state poller, auth, lifecycle
+src-tauri/src/lib.rs        54 Tauri commands, hidden player, cookie state poller, auth, lifecycle
 src-tauri/src/api/          REST client, auth, session import
 src-tauri/src/audio/        parked local engine (symphonia + rodio)
 src-tauri/src/library/      parked local library (SQLite)

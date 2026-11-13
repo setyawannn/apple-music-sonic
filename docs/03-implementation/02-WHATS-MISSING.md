@@ -32,7 +32,16 @@ table). The transport bar shows the queue length and opens the drawer.
 **Fix.** Add a `get_stations` command and queue a station id through `stream_play`, or keep the
 placeholder explicit.
 
-## Gap 4 — Library album grouping is name-based
+## Gap 4 — Removing a track from a playlist
+
+Create/rename/delete playlist and add-tracks all work. **Removing** a track does not: Apple
+returns 404 for `DELETE …/tracks/{id}` and for the `relationships/tracks` form, on both
+`amp-api` and `api` hosts (measured). There is no UI for it.
+
+**Fix.** Find the endpoint Apple's own web client uses (likely a different header set), or
+accept it permanently and say so in the UI.
+
+## Gap 5 — Library album grouping is name-based
 
 `deriveLibraryAlbums` keys on `artist + album name` because `StoreSong` carries no collection
 id. Two same-named albums by one artist would merge.
@@ -40,7 +49,7 @@ id. Two same-named albums by one artist would merge.
 **Fix.** Extend the library song parse to keep the collection id/name from Apple's response
 and group on that.
 
-## Gap 5 — Audio ceiling (won't fix on this architecture)
+## Gap 6 — Audio ceiling (won't fix on this architecture)
 
 AAC 256 kbps. Lossless needs either a native CDM integration or a different playback host.
 Out of scope for the MVP; document it in the UI as a known limitation rather than pretending
@@ -64,6 +73,7 @@ otherwise.
 | Resume on launch (P3) | Only the session survived a restart | `player_state.json` + `player_queue.json`; bar restores paused, play rebuilds the queue |
 | Keyboard (P3) | Mouse only | Space / arrows / `M` (media keys still open) |
 | Queue drawer (P3) | Queue length shown, contents hidden | `mk_queue` cookie (base64) → `player-queue`; Up Next drawer with click-to-jump (verified live: `items=5`) |
+| Playlists (P2.6) | Read-only cards; "New Playlist" wrote to the parked local DB | Library playlists are the real ones; create/rename/delete/add-track write to Apple Music (measured live), local playlist UI removed |
 
 ## Out of scope (deliberately)
 

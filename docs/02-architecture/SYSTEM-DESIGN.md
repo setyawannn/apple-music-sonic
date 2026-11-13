@@ -17,7 +17,7 @@
                            │  invoke() / listen()
 ┌──────────────────────────▼──────────────────────────────────────────┐
 │ Tauri command layer — src-tauri/src/lib.rs                            │
-│   54 commands, window lifecycle, event emit                          │
+│   58 commands, window lifecycle, event emit                          │
 └──────┬───────────────────┬──────────────────────┬───────────────────┘
        │                   │                      │
 ┌──────▼──────┐   ┌────────▼─────────┐   ┌────────▼──────────────────┐
@@ -87,15 +87,17 @@ MusicKit's own state. The local fork remains a wart until the parked engine is f
 | Load Listen Now | `get_recommendations` |
 | Load Browse | `get_charts` |
 | Library / Albums / Artists | `get_personal_library` → grouped client-side |
-| Playlists | `get_cloud_playlists` → `get_cloud_playlist_tracks` (+ parked local playlists) |
+| Playlists | `get_cloud_playlists` → `get_cloud_playlist_tracks` (read); create/rename/delete/add-track hit Apple's library-playlist endpoints |
+| Create / rename / delete playlist | modal or `⋯` menu → `create_cloud_playlist` / `rename_cloud_playlist` / `delete_cloud_playlist` → `/v1/me/library/playlists` |
+| Add to Playlist | `+` on any track row → picker → `add_to_cloud_playlist` |
 | Sign in | WebView2 window → cookie poll → validate → persist → emit `auth-success` |
 | Import session | cookie SQLite → validate → persist |
 
 ### Not wired yet
 
 Radio stations (needs Apple's stations API) · `sync_cloud_library` (registered, no UI) ·
-lyrics / downloads (out of scope). See
-`docs/03-implementation/02-WHATS-MISSING.md`.
+removing a track from a playlist (Apple exposes no endpoint — see `HOW-IT-WORKS`) ·
+lyrics / downloads (out of scope). See `docs/03-implementation/02-WHATS-MISSING.md`.
 
 ## Concurrency model
 

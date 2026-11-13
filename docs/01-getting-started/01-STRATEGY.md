@@ -72,7 +72,7 @@ decoder, and EME output cannot be read as PCM). Lossless is out of reach on this
 | Next / prev / shuffle / repeat / volume while streaming | ✅ works (MusicKit queue) |
 | Album detail (catalog + iCloud) | ✅ works |
 | Your Library = iCloud library | ✅ works |
-| Cloud playlists | ✅ works (open + play) |
+| Cloud playlists | ✅ works (read + create/rename/delete/add songs) |
 | Browse tab | ✅ works (Top Albums / Top Songs) |
 | Loading spinner / error toast / resume on launch | ✅ works |
 | Keyboard shortcuts | ✅ works (Space, arrows, `M`) |
@@ -103,8 +103,9 @@ transport bar never guesses.
 
 **P2 — Surface the Apple library. ✅ DONE (2026-11-13).**
 Library/Albums/Artists read the iCloud library; album cards open a detail view with
-Play/Shuffle; cloud playlists open and play; the welcome screen offers sign-in instead of a
-folder scan; Browse shows the charts.
+Play/Shuffle; the welcome screen offers sign-in instead of a folder scan; Browse shows the
+charts. **Playlists are the user's Apple Music playlists** and are two-way: create, rename,
+delete and add-tracks all write to Apple Music (the local playlist DB is no longer used).
 
 **P3 — Polish. 🚧 IN PROGRESS (2026-11-13).**
 Loading spinner and error toast (transport state machine), resume-last-song on launch, in-app

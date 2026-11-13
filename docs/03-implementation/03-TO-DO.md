@@ -47,8 +47,9 @@ MusicKit owns the queue. `stream_play` takes the ids of the visible list
 queue and next/previous now have somewhere to go.
 
 ### P1.2 New commands + bootstrap branches — ✅
-`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume` (54
-commands today, after P3 added `get_last_player_state` and `stream_jump_to`). `__mkDo` branches: `skipToNextItem`, `skipToPreviousItem`
+`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume` (58
+commands today, after P3 added `get_last_player_state`/`stream_jump_to` and the playlist
+writes). `__mkDo` branches: `skipToNextItem`, `skipToPreviousItem`
 (restart-if->3s, Apple's own rule), `m.shuffleMode`, `m.repeatMode`, `m.volume`.
 `publish()` now also reports `album`, `shuffle`, `repeat`, `volume`, `queueLength`, so
 the buttons repaint from the player's state instead of a local guess.
@@ -88,6 +89,18 @@ signed in. The scanner is no longer offered.
 `renderBrowse` shows Top Albums and Top Songs from `get_charts`. Radio needs Apple's
 stations API, which is not wired up; `renderRadio` says so instead of showing a fake page.
 
+### P2.6 Playlist sync (two-way) — ✅ DONE (2026-11-13)
+Playlists are the user's Apple Music library playlists; the local SQLite playlist UI is gone
+and `get_playlists` is no longer called. Four write commands (`create_cloud_playlist`,
+`rename_cloud_playlist`, `delete_cloud_playlist`, `add_to_cloud_playlist`) hit Apple's
+`/v1/me/library/playlists` endpoints, all measured live (create 201, rename 204, delete 204,
+add 204). Frontend: create/rename share a modal, `⋯` gives Rename/Delete for `can_edit`
+playlists, and a `+` on any track row opens a playlist picker. Verified via a scratch
+create→add→rename→delete probe (and the scratch playlist was deleted).
+
+**Not done:** removing a track from a playlist — Apple returns 404 on every form of the
+endpoint (see `HOW-IT-WORKS`). Left out rather than faking it.
+
 ---
 
 ## P3 — Polish — 🚧 IN PROGRESS
@@ -103,7 +116,7 @@ a dismissible toast reports failures (previously only `console.error`). Verified
 `start_state_poller` writes the last track's state to
 `%APPDATA%\com.applemusicrs.desktop\player_state.json` (throttled to song changes and ~5 s
 steps); `stream_play` writes the queue to `player_queue.json`. New command
-`get_last_player_state` (now 54 commands) returns both. On launch `restoreLastSession()` repaints
+`get_last_player_state` (58 commands today) returns both. On launch `restoreLastSession()` repaints
 the bar paused and remembers the queue; the first press of play rebuilds the queue and seeks
 back to the saved position. Live-verified: the state file was written with the real track and
 the null-id reset report was correctly ignored. The queue file/rebuild path has not been
@@ -117,7 +130,7 @@ Space toggles play/pause, ←/→ seek ±5 s, ↑/↓ adjust volume ±5 %, ⌘/C
 The page publishes the current item + next 40 as base64 JSON in a second cookie `mk_queue`;
 `start_state_poller` decodes it (new `base64_decode`) and emits `player-queue`. The transport
 bar's queue button shows the length; the drawer lists the rows, highlights the playing one, and
-clicking a row calls `stream_jump_to` → `changeToMediaAtIndex` (54 commands). Verified live:
+clicking a row calls `stream_jump_to` → `changeToMediaAtIndex` (58 commands). Verified live:
 `[PLAYER] queue items=5`.
 
 ### Remaining

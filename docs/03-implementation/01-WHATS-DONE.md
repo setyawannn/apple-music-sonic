@@ -56,8 +56,11 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Charts | `get_charts` | ✅ Listen Now fallback + Browse |
 | Recommendations | `get_recommendations` | ✅ (Listen Now) |
 | Personal iCloud songs | `get_personal_library` | ✅ Library / Albums / Artists, preloaded at sign-in |
-| Cloud playlists | `get_cloud_playlists` | ✅ cards + sidebar |
-| Cloud playlist tracks | `get_cloud_playlist_tracks` | ✅ opens and plays through the queue path |
+| Cloud playlists (read) | `get_cloud_playlists` | ✅ Playlists tab + sidebar |
+| Cloud playlist tracks | `get_cloud_playlist_tracks` | ✅ detail with Play/Shuffle, rows play via the queue |
+| Create / rename / delete playlist | `create_cloud_playlist`, `rename_cloud_playlist`, `delete_cloud_playlist` | ✅ writes to Apple Music (measured: 201/204/204) |
+| Add tracks to a playlist | `add_to_cloud_playlist` | ✅ `+` on any track row → picker (measured: 204) |
+| Remove a track from a playlist | — | ❌ Apple exposes no endpoint (404 on every form) |
 | Library sync | `sync_cloud_library` | ❌ registered, no UI; counts only, does not persist |
 
 ## 4. UI shell — ✅
@@ -70,6 +73,7 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Real progress, play/pause, next/prev, shuffle, repeat, volume sync | ✅ |
 | Library / Albums / Artists from the iCloud library | ✅ |
 | Album detail (catalog) and derived iCloud album detail | ✅ |
+| Playlist detail, create/rename/delete, add-to-playlist picker | ✅ |
 | Browse (Top Albums / Top Songs) | ✅ |
 | Radio | ❌ honest placeholder (needs Apple stations API) |
 | Loading spinner + error toast (transport state machine) | ✅ |
@@ -125,7 +129,7 @@ command queue, the cookie poller, or the frontend. Verification for those is a d
 | Playback state truth | ✅ done (P0) |
 | Transport (next/prev/shuffle/repeat/volume) | ✅ done (P1, queue model A) |
 | Catalog browse/search/charts/recs | ✅ done |
-| Album detail, iCloud library, cloud playlists | ✅ done (P2) |
+| Album detail, iCloud library, cloud playlists (read + write) | ✅ done (P2) |
 | Loading/error state, keyboard shortcuts, resume on launch | ✅ done (P3, partial) |
 | Browse / Radio | ✅ Browse · ❌ Radio (stations API) |
 | Local file playback | ⏸ parked |

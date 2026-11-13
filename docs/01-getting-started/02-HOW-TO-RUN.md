@@ -58,7 +58,7 @@ needed.
 5. **Next / previous / shuffle / repeat / volume** act on the list you clicked: that list
    becomes MusicKit's queue, and the transport bar mirrors the player's own state.
 6. **Library / Albums / Artists** read your iCloud library; album cards open a detail view
-   with Play and Shuffle; cloud playlists open and play.
+   with Play and Shuffle; playlists are your Apple Music playlists (open, play, and edit them).
 
 ### What you can expect to be rough
 

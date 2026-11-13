@@ -252,6 +252,41 @@ play icon flip back after 30 s. History and evidence: `docs/04-bugs/03-PLAYER-ST
 
 ---
 
+## Playlists — read and write
+
+Playlists are the user's **Apple Music library playlists**. The local SQLite playlists
+(`library/**`) are parked and no longer reachable from the UI.
+
+Reading: `get_cloud_playlists` → `/v1/me/library/playlists`; opening one calls
+`get_cloud_playlist_tracks`. Rows play through the same MusicKit queue path as everything else.
+
+Writing (all verified against a live session during a scratch create→add→rename→delete probe):
+
+| Action | Request | Result |
+|--------|---------|--------|
+| Create | `POST /v1/me/library/playlists?l={lang}` `{attributes:{name}}` | 201 + new `p.…` id |
+| Rename | `PUT /v1/me/library/playlists/{id}` `{attributes:{name}}` — **no `?l=`** | 204 |
+| Delete | `DELETE /v1/me/library/playlists/{id}` | 204 |
+| Add tracks | `POST /v1/me/library/playlists/{id}/tracks?l={lang}` `{data:[{id,type}]}` | 204 |
+| Remove track | — | ❌ 404 (not exposed) |
+
+Two quirks are load-bearing and easy to regress:
+
+- **Rename must not carry the `?l=` query parameter.** With it, Apple returns 500; without it,
+  204. Create/add/delete *do* take `?l=`.
+- **Track `type` depends on the id.** Catalog ids (numeric) use `type: "songs"`; the user's
+  library songs (`i.` prefix) use `type: "library-songs"` — see `library_track_type`.
+
+**Remove-track is not supported** by this API: `DELETE …/tracks/{id}` and
+`…/relationships/tracks` both 404, on both hosts. The UI therefore does not offer it.
+
+On the frontend, every catalog track row gets a `+` button injected by a single
+`MutationObserver` (`decorateTrackRows`) rather than by editing each row template; the `+`
+opens a picker of the user's editable playlists. Create and rename share one modal
+(`openPlaylistFormModal`); `⋯` on a `can_edit` playlist opens Rename/Delete.
+
+---
+
 ## Authentication
 
 All three paths end with a `media-user-token` string, persisted to
@@ -274,12 +309,12 @@ player after a successful sign-in.
 
 ---
 
-## Command surface (54 commands)
+## Command surface (58 commands)
 
 | Group | Count | Commands |
 |-------|-------|----------|
 | Streaming player | 12 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek`, `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume`, `get_last_player_state`, `stream_jump_to` |
-| Apple Music API + auth | 15 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `play_stream_track` |
+| Apple Music API + auth | 19 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `create_cloud_playlist`, `rename_cloud_playlist`, `delete_cloud_playlist`, `add_to_cloud_playlist`, `play_stream_track` |
 | Native bridge + diagnostics | 3 | `get_native_bridge_status`, `import_local_apple_session`, `run_native_bridge_diagnostics` |
 | **Parked** local playback | 12 | `play_track`, `play_album`, `pause_playback`, `resume_playback`, `stop_playback`, `seek_to`, `set_volume`, `get_playback_status`, `next_track`, `prev_track`, `set_repeat_mode`, `set_shuffle` |
 | **Parked** local library | 12 | `scan_library`, `get_albums`, `get_tracks`, `get_artists`, `get_playlists`, `get_track_count`, `create_playlist`, `add_to_playlist`, `remove_from_playlist`, `delete_playlist`, `import_playlist`, `export_playlist` |
@@ -313,13 +348,13 @@ not part of the product.
 
 | Path | Lines | Role |
 |------|-------|------|
-| `src-tauri/src/lib.rs` | 1,385 | 54 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish + Up Next), `ensure_player`, `player_command`, `start_state_poller` (state + restore persistence), `base64_decode`, auth windows, lifecycle |
-| `src-tauri/src/api/client.rs` | 474 | REST: search, suggestions, album, charts, library, playlists |
+| `src-tauri/src/lib.rs` | 1,450 | 58 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish + Up Next), `ensure_player`, `player_command`, `start_state_poller` (state + restore persistence), `base64_decode`, playlist write commands, auth windows, lifecycle |
+| `src-tauri/src/api/client.rs` | 662 | REST: search, suggestions, album, charts, library, playlists (read + create/rename/delete/add-tracks) |
 | `src-tauri/src/api/local_session.rs` | 397 | WebView2 cookie import |
 | `src-tauri/src/api/auth.rs` | 166 | Developer token, session persistence, storefront |
 | `src-tauri/src/api/models.rs` | 101 | Store models |
-| `src/js/app.js` | 2,233 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, keyboard shortcuts, resume) |
-| `src/styles/app.css` | 1,286 | Apple-style dark theme |
+| `src/js/app.js` | 2,357 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, playlist read/write, keyboard shortcuts, resume) |
+| `src/styles/app.css` | 1,407 | Apple-style dark theme |
 | `index.html` | 176 | Shell: sidebar, main view, playback bar |
 | `src-tauri/src/audio/**`, `library/**` | 2,077 | **PARKED** local engine + library |
 | `src-tauri/src/drm/**` | 1,538 | **ABANDONED** native decrypt attempt |

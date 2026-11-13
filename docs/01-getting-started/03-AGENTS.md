@@ -14,7 +14,7 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 3. Search catalog with typeahead
 4. Album detail view
 5. Your Library = the user's **iCloud** library
-6. Cloud playlists
+6. Cloud playlists — read **and** create/rename/delete/add-tracks (writes to Apple Music)
 7. Play full songs, with working transport (play/pause, next/prev, seek, shuffle, repeat)
    and a playback bar that tells the truth
 
@@ -26,9 +26,9 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 
 ## Quick facts
 
-- **23 Rust files, ~5,200 lines**, **54 Tauri commands** registered in `generate_handler!`
+- **23 Rust files, ~5,600 lines**, **58 Tauri commands** registered in `generate_handler!`
 - **~20 MB** release binary; RAM target **~80 MB** (not yet measured — treat old claims as aspirational)
-- Frontend: `index.html`, `src/js/app.js` (2,233 lines), `src/styles/app.css` (1,286 lines)
+- Frontend: `index.html`, `src/js/app.js` (2,357 lines), `src/styles/app.css` (1,407 lines)
 - Streaming works: hidden MusicKit WebView2 + Windows PlayReady CDM
 - Playback state works: page writes a cookie, Rust polls the cookie jar, emits `player-state`
 - Auth works: developer token scraped from Apple's web bundle + `media-user-token` cookie
@@ -100,6 +100,16 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 - The frontend transport is a state machine (`streamPhase`): a play command enters `loading`
   and only a real `player-state` for that song clears it. Do not paint "playing" optimistically
   past the icon/title — the whole point of P0 is that the bar tells the truth.
+- Playlists are the user's **Apple Music library playlists**, not the parked local SQLite ones.
+  The write endpoints (`create/rename/delete/add-track`) live in `api/client.rs` and were
+  measured against a live session:
+  - **Rename must NOT send `?l=`** (`PUT /v1/me/library/playlists/{id}` with a bare
+    `{ "attributes": { "name" } }` body → 204). With the query param Apple returns **500**.
+    Create / add-tracks / delete do take `?l=`.
+  - Track refs: catalog ids → `type: "songs"`; library ids (`i.` prefix) → `type: "library-songs"`.
+  - **Removing a track from a library playlist is not exposed** by this API — every form
+    (`/tracks/{id}` and `/relationships/tracks`, both hosts) returned 404. Do not build UI that
+    promises it until an endpoint is found.
 - The hidden player is a real window. Tauri keeps the app alive while it exists, so the main
   window's `Destroyed` handler calls `app_handle().exit(0)`.
 - Sign-in wipes the shared `auth_profile` directory. `start_apple_sign_in` therefore closes
@@ -115,17 +125,17 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 
 | Path | Purpose |
 |------|---------|
-| `src-tauri/src/lib.rs` (1,385) | 54 commands, hidden player + bootstrap script (queue, transport, publish, Up Next), cookie state poller (+ restore persistence), auth windows, lifecycle |
+| `src-tauri/src/lib.rs` (1,450) | 58 commands, hidden player + bootstrap script (queue, transport, publish, Up Next), cookie state poller (+ restore persistence), playlist write commands, auth windows, lifecycle |
 | `src-tauri/src/api/auth.rs` (166) | Developer token, session persistence, storefront |
-| `src-tauri/src/api/client.rs` (474) | REST client: search, album, charts, library, playlists |
+| `src-tauri/src/api/client.rs` (662) | REST client: search, album, charts, library, playlists (read **and** create/rename/delete/add-tracks) |
 | `src-tauri/src/api/local_session.rs` (397) | Imports session from WebView2 cookie SQLite |
 | `src-tauri/src/api/models.rs` (101) | Store models |
 | `src-tauri/src/audio/**` (1,071) | **PARKED** local engine |
 | `src-tauri/src/library/**` (1,006) | **PARKED** local library + SQLite |
 | `src-tauri/src/drm/**` (1,538) | **ABANDONED** native decrypt attempt (diagnostics only) |
 | `src-tauri/capabilities/player.json` | Remote capability for the `player` webview |
-| `src/js/app.js` (2,233) | All UI logic (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, keyboard shortcuts, resume) |
-| `src/styles/app.css` (1,286) | Apple-style dark theme |
+| `src/js/app.js` (2,357) | All UI logic (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, playlist read/write, keyboard shortcuts, resume) |
+| `src/styles/app.css` (1,407) | Apple-style dark theme |
 
 ## Docs map
 

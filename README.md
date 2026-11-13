@@ -22,7 +22,7 @@ matches what the player is actually doing.
 | Browse: Listen Now, Browse/Charts, Search + typeahead | ✅ works |
 | Next / previous / shuffle / repeat / volume while streaming | ✅ works (MusicKit owns the queue) |
 | Album detail (catalog + iCloud), iCloud library views | ✅ works |
-| Cloud playlists | ✅ works |
+| Cloud playlists (read + create/rename/delete/add songs) | ✅ works |
 | Loading spinner, error toast, resume-on-launch | ✅ works |
 | Keyboard shortcuts (Space, arrows, `M`) | ✅ works |
 | Up Next queue drawer (click to jump) | ✅ works |
@@ -76,7 +76,7 @@ Production binary: `src-tauri/target/release/app.exe` (~20 MB).
 index.html                  UI shell (sidebar, main view, playback bar)
 src/js/app.js               UI logic and Tauri command calls
 src/styles/app.css          Apple-style dark theme
-src-tauri/src/lib.rs        54 Tauri commands, hidden player, cookie state poller, auth, lifecycle
+src-tauri/src/lib.rs        58 Tauri commands, hidden player, cookie state poller, auth, lifecycle
 src-tauri/src/api/          REST client, auth, session import
 src-tauri/src/audio/        parked local engine (symphonia + rodio)
 src-tauri/src/library/      parked local library (SQLite)

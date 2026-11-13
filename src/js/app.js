@@ -9,6 +9,7 @@ const state = {
   artists: [],
   playlists: [],
   cloudPlaylists: [],
+  cloudTracks: [],
   isSyncing: false,
   auth: {
     isAuthenticated: false,
@@ -27,6 +28,16 @@ const state = {
     repeatMode: "Off",
     isShuffle: false,
   },
+  // Hidden MusicKit player's own state, mirrored from `player-state`.
+  streamingActive: false,
+  streamIsPlaying: false,
+  streamPosition: 0,
+  streamDuration: 0,
+  streamAnchor: 0,
+  streamShuffle: false,
+  streamRepeat: 0, // 0 off, 1 one, 2 all
+  streamVolume: null,
+  streamQueueLength: 0,
 };
 
 // ─── DOM References ────────────────────────────────────────────
@@ -95,10 +106,12 @@ document.querySelectorAll(".sidebar-nav:not(.library-nav) .nav-item").forEach((i
     navItems.forEach((n) => n.classList.remove("active"));
     item.classList.add("active");
 
-    if (view === "listen-now" || view === "browse") {
-      renderListenNow();
+    if (view === "browse") {
+      renderBrowse();
+    } else if (view === "radio") {
+      renderRadio();
     } else {
-      renderWelcome();
+      renderListenNow();
     }
   });
 });
@@ -133,6 +146,9 @@ async function checkAuthState() {
       authBtn.classList.add("authenticated");
       authLabel.textContent = "Apple ID";
       syncCloudPlaylists();
+      // Preload the iCloud library so the Library badge and the library views
+      // are instant the first time they are opened.
+      ensureCloudLibrary().catch(() => {});
     } else {
       authBtn.classList.remove("authenticated");
       authLabel.textContent = "Sign In";
@@ -197,6 +213,12 @@ try {
     state.streamingActive = !!payload.id;
     // Re-anchor the local clock so the progress bar stays honest.
     state.streamAnchor = Date.now() - state.streamPosition * 1000;
+    state.streamShuffle = !!payload.shuffle;
+    state.streamRepeat = payload.repeat || 0;
+    state.streamQueueLength = payload.queueLength || 0;
+    if (typeof payload.volume === "number") state.streamVolume = payload.volume;
+
+    paintStreamControls();
 
     if (payload.title) {
       if (nowPlayingTitle) nowPlayingTitle.textContent = payload.title;
@@ -217,6 +239,12 @@ try {
     if (fill && state.streamDuration > 0) {
       fill.style.width = `${Math.min(100, (state.streamPosition / state.streamDuration) * 100)}%`;
     }
+
+    // Highlight the row that is actually playing (Apple's list state), and clear
+    // the highlight from the rest.
+    document.querySelectorAll(".track-item.stream-track").forEach((el) => {
+      el.classList.toggle("playing", !!payload.id && el.dataset.catalogId === payload.id);
+    });
   });
 } catch (err) {
   console.warn("Could not register player-state listener:", err);
@@ -556,6 +584,82 @@ async function renderListenNow() {
   }
 }
 
+// ─── Browse ───────────────────────────────────────────────────
+
+// Apple's Browse tab is charts and editorial shelves. Charts are the part this
+// client can fetch truthfully from the catalog API, so Browse shows those.
+async function renderBrowse() {
+  mainView.innerHTML = `
+    <div class="view-header">
+      <div class="view-title">Browse</div>
+      <div class="view-subtitle">Loading charts…</div>
+    </div>
+  `;
+
+  try {
+    const charts = await invoke("get_charts", { types: "songs,albums", limit: 20 });
+    const albums = charts.albums || [];
+    const songs = charts.songs || [];
+
+    mainView.innerHTML = `
+      <div class="view-header">
+        <div class="view-title">Browse</div>
+        <div class="view-subtitle">Top Charts · Apple Music</div>
+      </div>
+
+      <h3 style="margin-bottom: 16px; font-size: 18px; font-weight: 700;">Top Albums</h3>
+      <div class="album-grid" style="margin-bottom: 32px;">
+        ${albums
+          .map((a) => {
+            const artUrl = a.artwork_url
+              ? a.artwork_url.replace("{w}", "300").replace("{h}", "300").replace("{f}", "jpg")
+              : null;
+            return `
+              <div class="album-card" data-catalog-album-id="${a.id}">
+                <div class="album-card-art">
+                  ${artUrl ? `<img src="${artUrl}" alt="${escapeHtml(a.title)}" />` : `<div class="placeholder"></div>`}
+                </div>
+                <div class="album-card-title">${escapeHtml(a.title)}</div>
+                <div class="album-card-artist">${escapeHtml(a.artist)}</div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+
+      <h3 style="margin-bottom: 16px; font-size: 18px; font-weight: 700;">Top Songs</h3>
+      <div class="track-list">
+        ${songs.map((s, i) => renderCloudTrackRow(s, i + 1)).join("")}
+      </div>
+    `;
+  } catch (err) {
+    mainView.innerHTML = `
+      <div class="view-header">
+        <div class="view-title">Browse</div>
+        <div class="view-subtitle">Could not load charts: ${escapeHtml(String(err))}</div>
+      </div>
+    `;
+  }
+}
+
+// Apple Music Radio is served by Apple's separate stations API. Until that is
+// wired up, say so instead of pretending a Radio page exists.
+function renderRadio() {
+  mainView.innerHTML = `
+    <div class="view-header">
+      <div class="view-title">Radio</div>
+      <div class="view-subtitle">Apple Music Radio</div>
+    </div>
+    <div class="empty-state">
+      <div class="empty-state-title">Radio is not wired up yet</div>
+      <div class="empty-state-desc">
+        Live stations need Apple's stations API. In the meantime, Listen Now and Browse play
+        the same catalog, and your iCloud library is under Library.
+      </div>
+    </div>
+  `;
+}
+
 // ─── Library Commands ──────────────────────────────────────────
 async function scanLibrary() {
   try {
@@ -643,100 +747,177 @@ async function handleCreatePlaylist() {
 // ─── View Renderers ────────────────────────────────────────────
 
 function renderWelcome() {
+  const signedIn = state.auth.isAuthenticated;
   mainView.innerHTML = `
     <div class="welcome-view">
       <svg class="welcome-icon" viewBox="0 0 48 48" fill="currentColor">
         <path d="M24 6C14.06 6 6 14.06 6 24s8.06 18 18 18 18-8.06 18-18S33.94 6 24 6zm-4 26.5v-17l12 8.5-12 8.5z"/>
       </svg>
-      <div class="welcome-title">Welcome to Apple Music</div>
+      <div class="welcome-title">${signedIn ? "You're signed in" : "Welcome to Apple Music"}</div>
       <div class="welcome-desc">
-        Scan your local music library to get started, or sign in to access your Apple Music subscription.
+        ${
+          signedIn
+            ? "Browse Listen Now, search the catalog, or open your iCloud library from the sidebar."
+            : "Sign in with your Apple ID to use your existing Apple Music subscription. No developer account needed."
+        }
       </div>
-      <button class="welcome-action" id="welcome-scan-btn">Scan My Music</button>
+      ${
+        signedIn
+          ? '<button class="welcome-action" id="welcome-listen-btn">Go to Listen Now</button>'
+          : '<button class="welcome-action" id="welcome-signin-btn">Sign In</button>'
+      }
     </div>
   `;
-  document.getElementById("welcome-scan-btn")?.addEventListener("click", scanLibrary);
+  document.getElementById("welcome-signin-btn")?.addEventListener("click", () => authBtn?.click());
+  document.getElementById("welcome-listen-btn")?.addEventListener("click", () => {
+    document.querySelector('.nav-item[data-view="listen-now"]')?.click();
+  });
 }
 
-function renderLibrary() {
-  if (state.tracks.length === 0) {
+// ─── iCloud library (the user's own Apple Music library) ────────
+
+function renderSignInPrompt(title) {
+  mainView.innerHTML = `
+    <div class="view-header"><div class="view-title">${escapeHtml(title)}</div></div>
+    <div class="empty-state">
+      <svg class="empty-state-icon" width="64" height="64" viewBox="0 0 48 48" fill="currentColor">
+        <path d="M24 6C14.06 6 6 14.06 6 24s8.06 18 18 18 18-8.06 18-18S33.94 6 24 6zm-4 26.5v-17l12 8.5-12 8.5z"/>
+      </svg>
+      <div class="empty-state-title">Sign in to Apple Music</div>
+      <div class="empty-state-desc">Your library, albums and artists come from your Apple Music account.</div>
+      <button id="library-signin-btn">Sign In</button>
+    </div>
+  `;
+  document.getElementById("library-signin-btn")?.addEventListener("click", () => authBtn?.click());
+}
+
+async function ensureCloudLibrary(force = false) {
+  if (!state.auth.isAuthenticated) return [];
+  if (!force && state.cloudTracks.length > 0) return state.cloudTracks;
+  try {
+    const songs = await invoke("get_personal_library");
+    state.cloudTracks = Array.isArray(songs) ? songs : [];
+  } catch (err) {
+    console.warn("iCloud library load failed:", err);
+    state.cloudTracks = [];
+  }
+  if (trackCount) trackCount.textContent = String(state.cloudTracks.length);
+  return state.cloudTracks;
+}
+
+// Group iCloud songs into albums and artists client-side — Apple's library views
+// are derived from the song list, and we already have everything needed.
+function deriveLibraryAlbums(songs) {
+  const map = new Map();
+  songs.forEach((s) => {
+    const key = `${s.artist}||${s.album || "Unknown Album"}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        title: s.album || "Unknown Album",
+        artist: s.artist,
+        artwork_url: s.artwork_url,
+        tracks: [],
+        year: s.release_date ? s.release_date.slice(0, 4) : "",
+      });
+    }
+    map.get(key).tracks.push(s);
+  });
+  return Array.from(map.values());
+}
+
+function deriveLibraryArtists(songs) {
+  const map = new Map();
+  songs.forEach((s) => {
+    if (!map.has(s.artist)) map.set(s.artist, { name: s.artist, tracks: [], artwork_url: s.artwork_url });
+    const a = map.get(s.artist);
+    a.tracks.push(s);
+    if (!a.artwork_url) a.artwork_url = s.artwork_url;
+  });
+  return Array.from(map.values());
+}
+
+async function renderLibrary() {
+  if (!state.auth.isAuthenticated) return renderSignInPrompt("Library");
+
+  const songs = await ensureCloudLibrary();
+  if (songs.length === 0) {
     mainView.innerHTML = `
+      <div class="view-header">
+        <div class="view-title">Library</div>
+        <div class="view-subtitle">0 songs · iCloud</div>
+      </div>
       <div class="empty-state">
-        <svg class="empty-state-icon" width="64" height="64" viewBox="0 0 48 48" fill="currentColor">
-          <path d="M24 6C14.06 6 6 14.06 6 24s8.06 18 18 18 18-8.06 18-18S33.94 6 24 6zm-4 26.5v-17l12 8.5-12 8.5z"/>
-        </svg>
-        <div class="empty-state-title">No Music Yet</div>
-        <div class="empty-state-desc">Scan your PC for music files to build your library.</div>
-        <button id="scan-btn">Scan My Music</button>
+        <div class="empty-state-title">Your iCloud library is empty</div>
+        <div class="empty-state-desc">Add songs in Apple Music and they appear here.</div>
       </div>
     `;
-    document.getElementById("scan-btn")?.addEventListener("click", scanLibrary);
     return;
   }
 
-  const recentAlbums = state.albums.slice(-12).reverse();
-  const allTracks = state.tracks;
-
+  const albums = deriveLibraryAlbums(songs).slice(0, 12);
   mainView.innerHTML = `
     <div class="view-header">
       <div class="view-title">Library</div>
-      <div class="view-subtitle">${state.tracks.length} songs · ${state.albums.length} albums · ${state.artists.length} artists</div>
+      <div class="view-subtitle">${songs.length} songs · ${albums.length} albums · iCloud</div>
     </div>
 
-    ${recentAlbums.length > 0 ? `
-    <h3 style="margin-bottom: 16px; font-size: 18px; font-weight: 700;">Recently Added</h3>
-    <div class="album-grid" id="recent-albums">
-      ${recentAlbums.map((album) => renderAlbumCard(album)).join("")}
+    <h3 style="margin-bottom: 16px; font-size: 18px; font-weight: 700;">Albums</h3>
+    <div class="album-grid" style="margin-bottom: 32px;">
+      ${albums.map((a) => renderLibraryAlbumCard(a)).join("")}
     </div>
-    ` : ""}
 
-    <h3 style="margin: 24px 0 16px; font-size: 18px; font-weight: 700;">Songs</h3>
+    <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 700;">Songs</h3>
     <div class="track-list">
-      ${allTracks.map((track, i) => renderTrackRow(track, i + 1)).join("")}
+      ${songs.map((s, i) => renderCloudTrackRow(s, i + 1)).join("")}
     </div>
   `;
 }
 
-function renderAlbums() {
-  if (state.albums.length === 0) {
-    renderEmpty("No Albums", "Scan your music library to see albums here.");
-    return;
-  }
+async function renderAlbums() {
+  if (!state.auth.isAuthenticated) return renderSignInPrompt("Albums");
 
+  const songs = await ensureCloudLibrary();
+  if (songs.length === 0) {
+    return renderEmpty("No Albums", "Your iCloud library has no songs yet.");
+  }
+  const albums = deriveLibraryAlbums(songs);
   mainView.innerHTML = `
     <div class="view-header">
       <div class="view-title">Albums</div>
-      <div class="view-subtitle">${state.albums.length} albums</div>
+      <div class="view-subtitle">${albums.length} albums · iCloud</div>
     </div>
-    <div class="album-grid" id="album-grid">
-      ${state.albums.map((album) => renderAlbumCard(album)).join("")}
+    <div class="album-grid">
+      ${albums.map((a) => renderLibraryAlbumCard(a)).join("")}
     </div>
   `;
 }
 
-function renderArtists() {
-  if (state.artists.length === 0) {
-    renderEmpty("No Artists", "Your artists will appear here once you scan your music.");
-    return;
-  }
+async function renderArtists() {
+  if (!state.auth.isAuthenticated) return renderSignInPrompt("Artists");
 
+  const songs = await ensureCloudLibrary();
+  if (songs.length === 0) {
+    return renderEmpty("No Artists", "Your iCloud library has no songs yet.");
+  }
+  const artists = deriveLibraryArtists(songs);
   mainView.innerHTML = `
     <div class="view-header">
       <div class="view-title">Artists</div>
-      <div class="view-subtitle">${state.artists.length} artists</div>
+      <div class="view-subtitle">${artists.length} artists · iCloud</div>
     </div>
     <div class="artist-grid">
-      ${state.artists
+      ${artists
         .map(
           (artist) => `
-        <div class="artist-card">
+        <div class="artist-card" data-library-artist="${escapeHtml(artist.name)}">
           <div class="artist-avatar">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
             </svg>
           </div>
           <div class="artist-name">${escapeHtml(artist.name)}</div>
-          <div class="artist-meta">${artist.album_count} albums · ${artist.track_count} songs</div>
+          <div class="artist-meta">${artist.tracks.length} songs</div>
         </div>
       `
         )
@@ -1000,7 +1181,228 @@ function renderTrackRow(track, index) {
   `;
 }
 
+// A row for any Apple Music song (catalog or iCloud). The data attributes are what
+// the delegated click handler reads to build the MusicKit queue.
+function renderCloudTrackRow(song, index) {
+  const duration = song.duration_ms ? formatTime(song.duration_ms / 1000) : "--:--";
+  const quality = song.has_lossless
+    ? '<span class="quality-badge quality-lossless">Lossless</span>'
+    : '<span class="quality-badge quality-lossless" style="background: rgba(250, 45, 72, 0.2); color: #fa2d48;">AAC</span>';
+  const atmos = song.has_atmos ? '<span class="quality-badge quality-atmos">Atmos</span>' : "";
+
+  return `
+    <div class="track-item stream-track" data-catalog-id="${song.id}" data-stream-url="${escapeHtml(song.preview_url || "")}" data-title="${escapeHtml(song.title)}" data-artist="${escapeHtml(song.artist)}" data-artwork="${escapeHtml(song.artwork_url || "")}" data-duration="${song.duration_ms ? song.duration_ms / 1000 : 0}">
+      <div class="track-number">${index}</div>
+      <div class="track-info">
+        <div class="track-name">${escapeHtml(song.title)}</div>
+        <div class="track-artist">${escapeHtml(song.artist)}${song.album ? " · " + escapeHtml(song.album) : ""}</div>
+      </div>
+      <div class="track-quality">${quality}${atmos}</div>
+      <div class="track-duration">${duration}</div>
+    </div>
+  `;
+}
+
+function renderLibraryAlbumCard(group) {
+  const artUrl = group.artwork_url
+    ? group.artwork_url.replace("{w}", "300").replace("{h}", "300").replace("{f}", "jpg")
+    : null;
+  return `
+    <div class="album-card" data-library-album="${escapeHtml(group.key)}">
+      <div class="album-card-art">
+        ${
+          artUrl
+            ? `<img src="${artUrl}" alt="${escapeHtml(group.title)}" />`
+            : `<div class="placeholder"><svg width="32" height="32" viewBox="0 0 24 24" fill="#555"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5z"/></svg></div>`
+        }
+      </div>
+      <div class="album-card-title">${escapeHtml(group.title)}</div>
+      <div class="album-card-artist">${escapeHtml(group.artist)}</div>
+    </div>
+  `;
+}
+
+// ─── Play a list of Apple Music songs ──────────────────────────
+
+function optimisticallyPlay(song, queueLength) {
+  if (!song) return;
+  if (nowPlayingTitle) nowPlayingTitle.textContent = song.title || "Apple Music";
+  if (nowPlayingArtist) nowPlayingArtist.textContent = song.artist || "Apple Music";
+  const badge = $("#now-playing-badge");
+  if (badge) badge.style.display = "block";
+  if (song.artwork_url) {
+    const artImg = $("#now-playing-art");
+    const formatted = song.artwork_url.replace("{w}", "100").replace("{h}", "100").replace("{f}", "jpg");
+    if (artImg) {
+      artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
+    }
+  }
+  state.streamingActive = true;
+  state.streamIsPlaying = true;
+  state.streamPosition = 0;
+  state.streamAnchor = Date.now();
+  state.streamDuration = song.duration_ms ? song.duration_ms / 1000 : 0;
+  state.streamQueueLength = queueLength || 1;
+  if (progressFill) progressFill.style.width = "0%";
+  if (currentTime) currentTime.textContent = "0:00";
+  if (totalTime && state.streamDuration > 0) totalTime.textContent = formatTime(state.streamDuration);
+}
+
+async function playCatalogTracks(tracks, startId, shuffle = false) {
+  const ids = tracks.map((t) => t.id).filter(Boolean);
+  if (ids.length === 0) return;
+  const start = startId && ids.includes(startId) ? startId : ids[0];
+  const song = tracks.find((t) => t.id === start) || tracks[0];
+
+  optimisticallyPlay(song, ids.length);
+  try {
+    await invoke("stream_play", { songId: start, queue: ids, shuffle });
+  } catch (err) {
+    console.error("Stream play failed:", err);
+    state.streamingActive = false;
+    state.streamIsPlaying = false;
+  }
+}
+
+// ─── Catalog album detail ──────────────────────────────────────
+
+async function showAlbumDetail(albumId) {
+  mainView.innerHTML = `
+    <div class="view-header">
+      <div class="view-title">Album</div>
+      <div class="view-subtitle">Loading album…</div>
+    </div>
+  `;
+  try {
+    const album = await invoke("get_catalog_album", { albumId });
+    renderAlbumDetail(album);
+  } catch (err) {
+    mainView.innerHTML = `
+      <div class="view-header">
+        <div class="view-title">Album</div>
+        <div class="view-subtitle">Could not load this album: ${escapeHtml(String(err))}</div>
+      </div>
+    `;
+  }
+}
+
+function renderAlbumDetail(album) {
+  const tracks = (album.tracks || [])
+    .slice()
+    .sort((a, b) => (a.track_number || 0) - (b.track_number || 0));
+  const artUrl = album.artwork_url
+    ? album.artwork_url.replace("{w}", "400").replace("{h}", "400").replace("{f}", "jpg")
+    : null;
+  const year = album.release_date ? album.release_date.slice(0, 4) : "";
+  const totalSecs = tracks.reduce((sum, t) => sum + (t.duration_ms || 0) / 1000, 0);
+  const meta = [year, `${tracks.length || album.track_count} songs`, totalSecs > 0 ? formatTime(totalSecs) : ""]
+    .filter(Boolean)
+    .join(" · ");
+
+  mainView.innerHTML = `
+    <div class="album-detail">
+      <div class="album-detail-art">
+        ${artUrl ? `<img src="${artUrl}" alt="${escapeHtml(album.title)}" />` : ""}
+      </div>
+      <div class="album-detail-meta">
+        <div class="album-detail-kind">Album</div>
+        <h1 class="album-detail-title">${escapeHtml(album.title)}</h1>
+        <div class="album-detail-artist">${escapeHtml(album.artist)}</div>
+        <div class="album-detail-sub">${escapeHtml(meta)}</div>
+        <div class="album-detail-actions">
+          <button class="play-pill" id="play-album-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            Play
+          </button>
+          <button class="play-pill secondary" id="shuffle-album-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+            Shuffle
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="track-list">
+      ${tracks.map((t, i) => renderCloudTrackRow(t, i + 1)).join("")}
+    </div>
+  `;
+
+  document.getElementById("play-album-btn")?.addEventListener("click", () => {
+    playCatalogTracks(tracks, tracks[0]?.id, false);
+  });
+  document.getElementById("shuffle-album-btn")?.addEventListener("click", () => {
+    const pick = tracks[Math.floor(Math.random() * tracks.length)];
+    playCatalogTracks(tracks, pick?.id, true);
+  });
+}
+
+// ─── iCloud album / artist detail (derived from the song list) ─
+
+function showLibraryAlbumDetail(key) {
+  const all = ensureCloudLibraryCached();
+  const group = deriveLibraryAlbums(all).find((g) => g.key === key);
+  if (!group) return;
+  const tracks = group.tracks.slice();
+  mainView.innerHTML = `
+    <div class="view-header">
+      <div class="view-title">${escapeHtml(group.title)}</div>
+      <div class="view-subtitle">${escapeHtml(group.artist)} · ${tracks.length} songs · iCloud</div>
+    </div>
+    <div class="album-detail-actions" style="margin-bottom: 20px;">
+      <button class="play-pill" id="play-lib-album-btn">Play</button>
+      <button class="play-pill secondary" id="shuffle-lib-album-btn">Shuffle</button>
+    </div>
+    <div class="track-list">
+      ${tracks.map((t, i) => renderCloudTrackRow(t, i + 1)).join("")}
+    </div>
+  `;
+  document.getElementById("play-lib-album-btn")?.addEventListener("click", () => {
+    playCatalogTracks(tracks, tracks[0]?.id, false);
+  });
+  document.getElementById("shuffle-lib-album-btn")?.addEventListener("click", () => {
+    const pick = tracks[Math.floor(Math.random() * tracks.length)];
+    playCatalogTracks(tracks, pick?.id, true);
+  });
+}
+
+function showArtistDetail(name) {
+  const all = ensureCloudLibraryCached();
+  const tracks = all.filter((s) => s.artist === name);
+  if (tracks.length === 0) return;
+  mainView.innerHTML = `
+    <div class="view-header">
+      <div class="view-title">${escapeHtml(name)}</div>
+      <div class="view-subtitle">${tracks.length} songs · iCloud library</div>
+    </div>
+    <div class="album-detail-actions" style="margin-bottom: 20px;">
+      <button class="play-pill" id="play-artist-btn">Play</button>
+    </div>
+    <div class="track-list">
+      ${tracks.map((t, i) => renderCloudTrackRow(t, i + 1)).join("")}
+    </div>
+  `;
+  document.getElementById("play-artist-btn")?.addEventListener("click", () => {
+    playCatalogTracks(tracks, tracks[0]?.id, false);
+  });
+}
+
+// The library detail views render from the already-loaded list; if the user opens
+// them before a load finished, fall back to whatever is cached (possibly empty).
+function ensureCloudLibraryCached() {
+  return state.cloudTracks || [];
+}
+
 // ─── Playback Delegated Events (Tracks & Albums & Playlists) ───────────
+
+// The list the user clicked in becomes MusicKit's queue, so next/previous behave
+// like the real app (they move through the album/search result/playlist you see).
+function catalogQueueFor(trackItem) {
+  const container = trackItem.closest(".track-list") || trackItem.parentElement;
+  if (!container) return [];
+  return Array.from(container.querySelectorAll(".track-item[data-catalog-id]"))
+    .map((el) => el.dataset.catalogId)
+    .filter(Boolean);
+}
+
 document.addEventListener("click", async (e) => {
   // 1. Cloud Playlist Item Click
   const cloudItem = e.target.closest("[data-cloud-playlist-id]");
@@ -1022,11 +1424,45 @@ document.addEventListener("click", async (e) => {
     }
   }
 
+  // 2b. Catalog album card → album detail view
+  const catalogAlbumCard = e.target.closest(".album-card[data-catalog-album-id]");
+  if (catalogAlbumCard && !e.target.closest(".play-overlay")) {
+    const id = catalogAlbumCard.dataset.catalogAlbumId;
+    if (id) {
+      showAlbumDetail(id);
+      return;
+    }
+  }
+
+  // 2c. iCloud library album card → derived album detail
+  const libraryAlbumCard = e.target.closest(".album-card[data-library-album]");
+  if (libraryAlbumCard && !e.target.closest(".play-overlay")) {
+    showLibraryAlbumDetail(libraryAlbumCard.dataset.libraryAlbum);
+    return;
+  }
+
+  // 2d. iCloud artist card → that artist's songs
+  const artistCard = e.target.closest(".artist-card[data-library-artist]");
+  if (artistCard) {
+    showArtistDetail(artistCard.dataset.libraryArtist);
+    return;
+  }
+
   // 3. Play Album Overlay Click
   const albumOverlay = e.target.closest(".play-overlay");
   const albumCard = e.target.closest(".album-card");
   if (albumOverlay && albumCard) {
     e.stopPropagation();
+    if (albumCard.dataset.catalogAlbumId) {
+      try {
+        const album = await invoke("get_catalog_album", { albumId: albumCard.dataset.catalogAlbumId });
+        const tracks = album.tracks || [];
+        if (tracks.length > 0) await playCatalogTracks(tracks, tracks[0].id, false);
+      } catch (err) {
+        console.error("Play album failed:", err);
+      }
+      return;
+    }
     const albumId = albumCard.dataset.albumId;
     if (albumId) {
       try {
@@ -1066,12 +1502,13 @@ document.addEventListener("click", async (e) => {
       try {
         if (catalogId) {
           // Full song via Apple's own player (PlayReady), not the 30s preview.
-          state.streamingActive = true;
-          state.streamIsPlaying = true;
-          state.streamPosition = 0;
-          state.streamAnchor = Date.now();
-          state.streamDuration = durationSecs > 0 ? durationSecs : 0;
-          await invoke("stream_play", { songId: catalogId });
+          // The rows around this one become the queue, so next/previous work.
+          const queue = catalogQueueFor(trackItem);
+          optimisticallyPlay(
+            { title, artist, artwork_url: artwork, duration_ms: durationSecs * 1000 },
+            queue.length || 1
+          );
+          await invoke("stream_play", { songId: catalogId, queue, shuffle: null });
         } else {
           await invoke("play_stream_track", {
             trackId: "stream_" + Date.now(),
@@ -1106,6 +1543,28 @@ document.addEventListener("click", async (e) => {
 });
 
 // ─── Playback Controls ─────────────────────────────────────────
+
+// Repaint shuffle/repeat/volume from the hidden player's own state, so the
+// buttons show what Apple Music is doing rather than a local guess.
+function paintStreamControls() {
+  const shuffleOn = state.streamShuffle;
+  if (shuffleBtn) {
+    shuffleBtn.classList.toggle("active", shuffleOn);
+    shuffleBtn.style.color = shuffleOn ? "var(--accent)" : "";
+  }
+
+  const mode = state.streamRepeat;
+  const label = mode === 2 ? "All" : mode === 1 ? "One" : "Off";
+  if (repeatBtn) {
+    repeatBtn.classList.toggle("active", mode !== 0);
+    repeatBtn.style.color = mode !== 0 ? "var(--accent)" : "";
+    repeatBtn.setAttribute("title", `Repeat: ${label}`);
+  }
+
+  if (typeof state.streamVolume === "number" && volumeFill) {
+    volumeFill.style.width = `${state.streamVolume * 100}%`;
+  }
+}
 
 playBtn?.addEventListener("click", async () => {
   try {
@@ -1142,6 +1601,10 @@ playBtn?.addEventListener("click", async () => {
 
 prevBtn?.addEventListener("click", async () => {
   try {
+    if (state.streamingActive) {
+      await invoke("stream_previous");
+      return;
+    }
     await invoke("prev_track");
     await syncPlaybackStatus();
   } catch (err) {
@@ -1151,6 +1614,10 @@ prevBtn?.addEventListener("click", async () => {
 
 nextBtn?.addEventListener("click", async () => {
   try {
+    if (state.streamingActive) {
+      await invoke("stream_next");
+      return;
+    }
     await invoke("next_track");
     await syncPlaybackStatus();
   } catch (err) {
@@ -1160,8 +1627,15 @@ nextBtn?.addEventListener("click", async () => {
 
 // Shuffle button toggle
 shuffleBtn?.addEventListener("click", async () => {
-  const newShuffle = !state.playback.isShuffle;
   try {
+    if (state.streamingActive) {
+      const next = !state.streamShuffle;
+      state.streamShuffle = next; // optimistic; the player's report confirms it
+      paintStreamControls();
+      await invoke("stream_shuffle", { enabled: next });
+      return;
+    }
+    const newShuffle = !state.playback.isShuffle;
     await invoke("set_shuffle", { enable: newShuffle });
     state.playback.isShuffle = newShuffle;
     shuffleBtn.classList.toggle("active", newShuffle);
@@ -1171,18 +1645,29 @@ shuffleBtn?.addEventListener("click", async () => {
   }
 });
 
-// Repeat button cycle: Off -> All -> One -> Off
-const repeatCycle = ["Off", "All", "One"];
-let currentRepeatIndex = 0;
+// Repeat button cycle: Off -> All -> One -> Off (Apple's own order)
+const repeatCycle = [
+  { mode: 0, label: "Off" },
+  { mode: 2, label: "All" },
+  { mode: 1, label: "One" },
+];
 repeatBtn?.addEventListener("click", async () => {
-  currentRepeatIndex = (currentRepeatIndex + 1) % repeatCycle.length;
-  const nextMode = repeatCycle[currentRepeatIndex];
   try {
-    await invoke("set_repeat_mode", { mode: nextMode });
-    state.playback.repeatMode = nextMode;
-    repeatBtn.classList.toggle("active", nextMode !== "Off");
-    repeatBtn.style.color = nextMode !== "Off" ? "var(--accent)" : "";
-    repeatBtn.setAttribute("title", `Repeat: ${nextMode}`);
+    if (state.streamingActive) {
+      const idx = repeatCycle.findIndex((m) => m.mode === state.streamRepeat);
+      const next = repeatCycle[(idx + 1) % repeatCycle.length];
+      state.streamRepeat = next.mode;
+      paintStreamControls();
+      await invoke("stream_repeat", { mode: next.label });
+      return;
+    }
+    const idx = repeatCycle.findIndex((m) => m.label === state.playback.repeatMode);
+    const next = repeatCycle[(idx + 1) % repeatCycle.length];
+    await invoke("set_repeat_mode", { mode: next.label });
+    state.playback.repeatMode = next.label;
+    repeatBtn.classList.toggle("active", next.label !== "Off");
+    repeatBtn.style.color = next.label !== "Off" ? "var(--accent)" : "";
+    repeatBtn.setAttribute("title", `Repeat: ${next.label}`);
   } catch (err) {
     console.error("Set repeat failed:", err);
   }
@@ -1195,6 +1680,11 @@ volumeBar?.addEventListener("click", async (e) => {
   const pct = Math.max(0, Math.min(1, x / rect.width));
   volumeFill.style.width = `${pct * 100}%`;
   try {
+    if (state.streamingActive) {
+      state.streamVolume = pct;
+      await invoke("stream_volume", { volume: pct });
+      return;
+    }
     await invoke("set_volume", { volume: pct });
     state.playback.volume = pct;
   } catch (err) {
@@ -1251,6 +1741,11 @@ document.getElementById("volume-btn")?.addEventListener("click", async () => {
   const targetVol = isMuted ? 0.8 : 0.0;
   volumeFill.style.width = `${targetVol * 100}%`;
   try {
+    if (state.streamingActive) {
+      state.streamVolume = targetVol;
+      await invoke("stream_volume", { volume: targetVol });
+      return;
+    }
     await invoke("set_volume", { volume: targetVol });
     state.playback.volume = targetVol;
   } catch (err) {

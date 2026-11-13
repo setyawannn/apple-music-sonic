@@ -316,7 +316,12 @@ const PLAYER_BOOTSTRAP: &str = r#"
         id: item && item.id ? item.id : null,
         title: attrs ? attrs.name : null,
         artist: attrs ? attrs.artistName : null,
-        artwork: attrs && attrs.artwork ? attrs.artwork.url : null
+        artwork: attrs && attrs.artwork ? attrs.artwork.url : null,
+        album: attrs ? attrs.albumName : null,
+        shuffle: typeof m.shuffleMode === 'number' ? m.shuffleMode : 0,
+        repeat: typeof m.repeatMode === 'number' ? m.repeatMode : 0,
+        volume: typeof m.volume === 'number' ? m.volume : null,
+        queueLength: m.queue && typeof m.queue.length === 'number' ? m.queue.length : 0
       });
       document.cookie = 'mk_state=' + encodeURIComponent(json) + '; path=/; max-age=300; Secure; SameSite=Lax';
     } catch (e) {}
@@ -331,13 +336,51 @@ const PLAYER_BOOTSTRAP: &str = r#"
     }
     var m = await window.__mkReady;
     if (cmd === 'play') {
-      await m.setQueue({ song: String(arg) });
+      // arg is JSON: { startWith, songs[] }. MusicKit owns the queue so that
+      // next/previous/shuffle/repeat behave like Apple Music instead of replaying
+      // one song forever.
+      var spec = null;
+      try { spec = JSON.parse(String(arg)); } catch (e) { spec = null; }
+      var songs = spec && Array.isArray(spec.songs) ? spec.songs.filter(Boolean) : [];
+      var startWith = (spec && spec.startWith) || songs[0] || String(arg);
+      // Apple's album "Shuffle" is the same queue with shuffle already on; a plain
+      // album Play turns it off. A bare track click leaves the mode untouched.
+      if (spec && spec.shuffle === true) {
+        try { m.shuffleMode = 1; } catch (e) {}
+      } else if (spec && spec.shuffle === false) {
+        try { m.shuffleMode = 0; } catch (e) {}
+      }
+      if (songs.length > 1) {
+        try {
+          await m.setQueue({ songs: songs, startWith: startWith });
+        } catch (e) {
+          await m.setQueue({ songs: songs });
+          var idx = songs.indexOf(startWith);
+          if (idx > 0) await m.changeToMediaAtIndex(idx);
+        }
+      } else {
+        await m.setQueue({ song: String(startWith) });
+      }
       return m.play();
     }
     if (cmd === 'pause') return m.pause();
     if (cmd === 'resume') return m.play();
     if (cmd === 'stop') return m.stop();
     if (cmd === 'seek') return m.seekToTime(Number(arg));
+    if (cmd === 'next') return m.skipToNextItem();
+    if (cmd === 'previous') {
+      // Apple's own rule: restart the track if we are more than 3s in.
+      if (typeof m.currentPlaybackTime === 'number' && m.currentPlaybackTime > 3) {
+        return m.seekToTime(0);
+      }
+      return m.skipToPreviousItem();
+    }
+    if (cmd === 'shuffle') { m.shuffleMode = Number(arg) ? 1 : 0; return; }
+    if (cmd === 'repeat') { m.repeatMode = Number(arg) || 0; return; }
+    if (cmd === 'volume') {
+      m.volume = Math.max(0, Math.min(1, Number(arg)));
+      return;
+    }
   };
 
   function run(job) {
@@ -433,8 +476,26 @@ async fn player_command(app: &tauri::AppHandle, cmd: &str, arg: Option<String>) 
 }
 
 #[tauri::command]
-async fn stream_play(app: tauri::AppHandle, song_id: String) -> Result<(), String> {
-    player_command(&app, "play", Some(song_id)).await
+async fn stream_play(
+    app: tauri::AppHandle,
+    song_id: String,
+    queue: Option<Vec<String>>,
+    shuffle: Option<bool>,
+) -> Result<(), String> {
+    // The queue travels with the click so MusicKit can own playback order: next,
+    // previous, shuffle and repeat then operate on the list the user was looking at,
+    // exactly like the real app. A single song is just a one-item queue.
+    let mut songs: Vec<String> = queue.unwrap_or_default();
+    songs.retain(|id| !id.is_empty());
+    if !songs.iter().any(|id| id == &song_id) {
+        songs.insert(0, song_id.clone());
+    }
+    let payload = serde_json::json!({
+        "startWith": song_id,
+        "songs": songs,
+        "shuffle": shuffle,
+    });
+    player_command(&app, "play", Some(payload.to_string())).await
 }
 
 #[tauri::command]
@@ -450,6 +511,37 @@ async fn stream_resume(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn stream_stop(app: tauri::AppHandle) -> Result<(), String> {
     player_command(&app, "stop", None).await
+}
+
+#[tauri::command]
+async fn stream_next(app: tauri::AppHandle) -> Result<(), String> {
+    player_command(&app, "next", None).await
+}
+
+#[tauri::command]
+async fn stream_previous(app: tauri::AppHandle) -> Result<(), String> {
+    player_command(&app, "previous", None).await
+}
+
+#[tauri::command]
+async fn stream_shuffle(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    player_command(&app, "shuffle", Some(if enabled { "1" } else { "0" }.to_string())).await
+}
+
+#[tauri::command]
+async fn stream_repeat(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+    // 0 = off, 1 = one, 2 = all — MusicKit.RepeatMode's own values.
+    let value = match mode.as_str() {
+        "One" | "one" | "1" => "1",
+        "All" | "all" | "2" => "2",
+        _ => "0",
+    };
+    player_command(&app, "repeat", Some(value.to_string())).await
+}
+
+#[tauri::command]
+async fn stream_volume(app: tauri::AppHandle, volume: f64) -> Result<(), String> {
+    player_command(&app, "volume", Some(volume.clamp(0.0, 1.0).to_string())).await
 }
 
 #[tauri::command]
@@ -1043,6 +1135,11 @@ pub fn run() {
             stream_resume,
             stream_stop,
             stream_seek,
+            stream_next,
+            stream_previous,
+            stream_shuffle,
+            stream_repeat,
+            stream_volume,
             // Library
             scan_library,
             get_albums,

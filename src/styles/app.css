@@ -957,7 +957,77 @@ html, body {
   background: var(--text-primary);
   color: var(--bg-primary) !important;
   border-radius: 50%;
+  position: relative;
   transition: transform 0.1s, background 0.15s;
+}
+
+/* While a stream is starting the play button shows a spinner instead of the
+   play/pause glyph, the way Apple Music does before audio is flowing. */
+.play-btn.loading > svg {
+  visibility: hidden;
+}
+
+.play-spinner {
+  display: none;
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.25);
+  border-top-color: var(--bg-primary);
+  animation: spin 0.7s linear infinite;
+}
+
+.play-btn.loading .play-spinner {
+  display: block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Transient toast for playback errors and notices */
+.toast-host {
+  position: fixed;
+  left: 50%;
+  bottom: 108px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 2000;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  max-width: 420px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: rgba(30, 30, 30, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast.error {
+  border-color: rgba(250, 35, 59, 0.5);
+}
+
+.toast.error::before {
+  content: "⚠️ ";
 }
 
 .play-btn:hover {

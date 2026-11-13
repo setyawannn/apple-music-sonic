@@ -495,6 +495,14 @@ async fn stream_play(
         "songs": songs,
         "shuffle": shuffle,
     });
+    // Remember the queue (not just the song) so the next launch can rebuild it.
+    if let Some(path) = player_queue_path(&app) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let blob = serde_json::json!({ "songs": songs, "shuffle": shuffle });
+        let _ = std::fs::write(path, blob.to_string());
+    }
     player_command(&app, "play", Some(payload.to_string())).await
 }
 
@@ -571,6 +579,22 @@ fn percent_decode(input: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Where the hidden player's last state is remembered between launches.
+fn player_state_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join("player_state.json"))
+}
+
+/// Where the last queue sent to the player is remembered between launches.
+fn player_queue_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join("player_queue.json"))
+}
+
 /// Forwards the hidden player's state to the UI.
 ///
 /// The page writes a compact JSON blob into the `mk_state` cookie. Nothing else
@@ -582,6 +606,9 @@ fn percent_decode(input: &str) -> String {
 fn start_state_poller(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut last = String::new();
+        // Throttle disk writes: only when the song changes or playback moves ~5s.
+        let mut saved_id = String::new();
+        let mut saved_pos = f64::NAN;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
@@ -605,8 +632,22 @@ fn start_state_poller(app: tauri::AppHandle) {
             if !json.starts_with('{') || json == last {
                 continue;
             }
-            if serde_json::from_str::<serde_json::Value>(&json).is_err() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&json) else {
                 continue;
+            };
+
+            // Remember the current track so the next launch can restore the bar.
+            let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let pos = value.get("position").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if !id.is_empty() && (id != saved_id || (pos - saved_pos).abs() >= 5.0) {
+                if let Some(path) = player_state_path(&app) {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(path, &json);
+                }
+                saved_id = id.to_string();
+                saved_pos = pos;
             }
 
             println!("[PLAYER] state {}", json);
@@ -614,6 +655,45 @@ fn start_state_poller(app: tauri::AppHandle) {
             let _ = app.emit("player-state", json);
         }
     });
+}
+
+/// Returns the last track and queue that were playing, for restore-on-launch.
+///
+/// The frontend uses this to repaint the playback bar (paused) and to rebuild the
+/// queue if the user hits play before choosing anything else. `None` means nothing
+/// was ever played on this machine.
+#[tauri::command]
+fn get_last_player_state(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let Some(state_path) = player_state_path(&app) else {
+        return Ok(None);
+    };
+    let Ok(state_raw) = std::fs::read_to_string(state_path) else {
+        return Ok(None);
+    };
+    let Ok(state_val) = serde_json::from_str::<serde_json::Value>(&state_raw) else {
+        return Ok(None);
+    };
+    if state_val.get("id").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        return Ok(None);
+    }
+
+    let queue = player_queue_path(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    let songs = queue
+        .as_ref()
+        .and_then(|v| v.get("songs").cloned())
+        .unwrap_or_else(|| serde_json::Value::Array(vec![]));
+    let shuffle = queue
+        .as_ref()
+        .and_then(|v| v.get("shuffle").cloned())
+        .unwrap_or(serde_json::Value::Null);
+
+    Ok(Some(serde_json::json!({
+        "state": state_val,
+        "queue": songs,
+        "shuffle": shuffle,
+    })))
 }
 
 #[cfg(test)]
@@ -1140,6 +1220,7 @@ pub fn run() {
             stream_shuffle,
             stream_repeat,
             stream_volume,
+            get_last_player_state,
             // Library
             scan_library,
             get_albums,

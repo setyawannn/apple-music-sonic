@@ -38,6 +38,16 @@ const state = {
   streamRepeat: 0, // 0 off, 1 one, 2 all
   streamVolume: null,
   streamQueueLength: 0,
+  // Transport state machine: idle | loading | playing | paused | error.
+  // `loading` is set the moment a command is sent and cleared by the first real
+  // report for that song, so the UI never shows a fake "playing" while buffering.
+  streamPhase: "idle",
+  streamPendingId: null,
+  streamLoadTimer: null,
+  streamError: null,
+  // Last session recalled from disk (state + queue); used to restore the bar and
+  // to rebuild the queue if the user hits play before choosing anything.
+  restore: null,
 };
 
 // ─── DOM References ────────────────────────────────────────────
@@ -54,6 +64,8 @@ const modalCloseBtn = $("#modal-close-btn");
 const modalAuthBody = $("#modal-auth-body");
 const playBtn = $("#play-btn");
 const playIcon = $("#play-icon");
+const playSpinner = $("#play-spinner");
+const toastHost = $("#toast-host");
 const prevBtn = $("#prev-btn");
 const nextBtn = $("#next-btn");
 const shuffleBtn = $("#shuffle-btn");
@@ -210,13 +222,25 @@ try {
     state.streamIsPlaying = !!payload.isPlaying;
     state.streamPosition = payload.position || 0;
     state.streamDuration = payload.duration || 0;
-    state.streamingActive = !!payload.id;
+    // A null id means the player is empty (stopped/reset). Do not let that cancel a
+    // load that is still in flight, or drop a stream the user just started.
+    if (payload.id) {
+      state.streamingActive = true;
+    } else if (!state.streamPendingId && state.streamPhase !== "loading") {
+      state.streamingActive = false;
+    }
     // Re-anchor the local clock so the progress bar stays honest.
     state.streamAnchor = Date.now() - state.streamPosition * 1000;
     state.streamShuffle = !!payload.shuffle;
     state.streamRepeat = payload.repeat || 0;
     state.streamQueueLength = payload.queueLength || 0;
     if (typeof payload.volume === "number") state.streamVolume = payload.volume;
+
+    // A real report for the song we're waiting on ends the loading state. While a
+    // load is pending, reports for another song (or a null id) are ignored.
+    if (!state.streamPendingId || (payload.id && payload.id === state.streamPendingId)) {
+      settleStreamPhase(state.streamIsPlaying);
+    }
 
     paintStreamControls();
 
@@ -1246,6 +1270,8 @@ function optimisticallyPlay(song, queueLength) {
   if (progressFill) progressFill.style.width = "0%";
   if (currentTime) currentTime.textContent = "0:00";
   if (totalTime && state.streamDuration > 0) totalTime.textContent = formatTime(state.streamDuration);
+  // Enter the loading state until the hidden player reports this song for real.
+  beginStreamLoad(song.id || null);
 }
 
 async function playCatalogTracks(tracks, startId, shuffle = false) {
@@ -1505,7 +1531,7 @@ document.addEventListener("click", async (e) => {
           // The rows around this one become the queue, so next/previous work.
           const queue = catalogQueueFor(trackItem);
           optimisticallyPlay(
-            { title, artist, artwork_url: artwork, duration_ms: durationSecs * 1000 },
+            { id: catalogId, title, artist, artwork_url: artwork, duration_ms: durationSecs * 1000 },
             queue.length || 1
           );
           await invoke("stream_play", { songId: catalogId, queue, shuffle: null });
@@ -1544,6 +1570,58 @@ document.addEventListener("click", async (e) => {
 
 // ─── Playback Controls ─────────────────────────────────────────
 
+// ─── Transport state machine ───────────────────────────────────
+//
+// Phases: idle → loading → playing ⇄ paused, or error. `loading` is entered when a
+// play command is dispatched and left only when the hidden player reports that
+// song back (or the watchdog gives up), so the UI never claims to be playing while
+// Apple's player is still buffering.
+
+function beginStreamLoad(songId) {
+  state.streamPendingId = songId;
+  state.streamError = null;
+  state.streamPhase = "loading";
+  paintStreamPhase();
+
+  clearTimeout(state.streamLoadTimer);
+  state.streamLoadTimer = setTimeout(() => {
+    if (state.streamPhase === "loading" && state.streamPendingId === songId) {
+      state.streamPhase = "error";
+      state.streamError = "This song didn't start. It may be unavailable, or you may need to sign in again.";
+      paintStreamPhase();
+      showToast(state.streamError, "error");
+    }
+  }, 12000);
+}
+
+function settleStreamPhase(isPlaying) {
+  clearTimeout(state.streamLoadTimer);
+  state.streamLoadTimer = null;
+  state.streamPendingId = null;
+  state.streamError = null;
+  state.streamPhase = isPlaying ? "playing" : "paused";
+  paintStreamPhase();
+}
+
+// Repaint only the loading affordance; the transport buttons are painted by
+// paintStreamControls() from the player's own state.
+function paintStreamPhase() {
+  if (playBtn) playBtn.classList.toggle("loading", state.streamPhase === "loading");
+}
+
+function showToast(message, kind = "info", ttl = 6000) {
+  if (!toastHost || !message) return;
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.textContent = message;
+  toastHost.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("visible"));
+  setTimeout(() => {
+    el.classList.remove("visible");
+    setTimeout(() => el.remove(), 250);
+  }, ttl);
+}
+
 // Repaint shuffle/repeat/volume from the hidden player's own state, so the
 // buttons show what Apple Music is doing rather than a local guess.
 function paintStreamControls() {
@@ -1568,6 +1646,11 @@ function paintStreamControls() {
 
 playBtn?.addEventListener("click", async () => {
   try {
+    // Nothing playing yet this session, but last launch left a queue: rebuild it.
+    if (!state.streamingActive && state.restore) {
+      await resumeLastSession();
+      return;
+    }
     // Streaming (hidden Apple player) takes priority when it owns playback.
     if (state.streamingActive) {
       if (state.streamIsPlaying) {
@@ -1576,10 +1659,14 @@ playBtn?.addEventListener("click", async () => {
           (Date.now() - state.streamAnchor) / 1000
         );
         state.streamIsPlaying = false;
+        state.streamPhase = "paused";
+        paintStreamPhase();
         await invoke("stream_pause");
       } else {
         state.streamAnchor = Date.now() - (state.streamPosition || 0) * 1000;
         state.streamIsPlaying = true;
+        state.streamPhase = "playing";
+        paintStreamPhase();
         await invoke("stream_resume");
       }
       return;
@@ -1753,6 +1840,100 @@ document.getElementById("volume-btn")?.addEventListener("click", async () => {
   }
 });
 
+// ─── Keyboard shortcuts ────────────────────────────────────────
+//
+// Apples's own desktop bindings where they make sense: Space toggles playback,
+// the arrows seek (⌘/Ctrl + arrows skip tracks, plain arrows nudge volume).
+// Ignored while typing or while a modal is open.
+
+async function seekStreamRelative(delta) {
+  if (!state.streamingActive) return;
+  const total = state.streamDuration || 0;
+  if (!(total > 0)) return;
+  const current = state.streamIsPlaying
+    ? (Date.now() - state.streamAnchor) / 1000
+    : state.streamPosition || 0;
+  const target = Math.max(0, Math.min(total, current + delta));
+  state.streamPosition = target;
+  state.streamAnchor = Date.now() - target * 1000;
+  if (progressFill) progressFill.style.width = `${(target / total) * 100}%`;
+  if (currentTime) currentTime.textContent = formatTime(target);
+  try {
+    await invoke("stream_seek", { position: target });
+  } catch (err) {
+    showToast("Couldn't seek.", "error");
+  }
+}
+
+async function nudgeVolume(delta) {
+  const base = typeof state.streamVolume === "number" ? state.streamVolume : state.playback.volume;
+  const vol = Math.max(0, Math.min(1, base + delta));
+  state.streamVolume = vol;
+  if (volumeFill) volumeFill.style.width = `${vol * 100}%`;
+  try {
+    if (state.streamingActive) {
+      await invoke("stream_volume", { volume: vol });
+    } else {
+      await invoke("set_volume", { volume: vol });
+      state.playback.volume = vol;
+    }
+  } catch (err) {
+    console.error("Volume shortcut failed:", err);
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  const t = e.target;
+  if (
+    t &&
+    (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)
+  ) {
+    return;
+  }
+  if (authModal && authModal.style.display !== "none") return;
+
+  const meta = e.metaKey || e.ctrlKey;
+
+  if (e.code === "Space") {
+    e.preventDefault();
+    playBtn?.click();
+    return;
+  }
+  if (meta && e.key === "ArrowRight" && state.streamingActive) {
+    e.preventDefault();
+    invoke("stream_next");
+    return;
+  }
+  if (meta && e.key === "ArrowLeft" && state.streamingActive) {
+    e.preventDefault();
+    invoke("stream_previous");
+    return;
+  }
+  if (e.key === "ArrowRight") {
+    e.preventDefault();
+    seekStreamRelative(5);
+    return;
+  }
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    seekStreamRelative(-5);
+    return;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    nudgeVolume(0.05);
+    return;
+  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    nudgeVolume(-0.05);
+    return;
+  }
+  if (e.key === "m" || e.key === "M") {
+    document.getElementById("volume-btn")?.click();
+  }
+});
+
 // ─── Continuous Playback Synchronization ───────────────────────
 async function syncPlaybackStatus() {
   try {
@@ -1852,6 +2033,83 @@ function debounce(fn, delay) {
   };
 }
 
+// ─── Restore last session ──────────────────────────────────────
+//
+// Rust remembers the last track, position and queue. On launch we repaint the bar
+// paused (Apple Music does not auto-play on launch) and keep the queue so that the
+// first press of play rebuilds exactly what was playing.
+
+async function restoreLastSession() {
+  try {
+    const saved = await invoke("get_last_player_state");
+    if (!saved || !saved.state || !saved.state.id) return;
+    state.restore = saved;
+    paintRestoredBar(saved.state);
+    if (typeof saved.state.volume === "number") {
+      state.streamVolume = saved.state.volume;
+      paintStreamControls();
+      // Align the hidden player's volume so the next play starts where the user left off.
+      invoke("stream_volume", { volume: saved.state.volume }).catch(() => {});
+    }
+  } catch (err) {
+    console.warn("Could not restore last session:", err);
+  }
+}
+
+function paintRestoredBar(last) {
+  if (last.title && nowPlayingTitle) nowPlayingTitle.textContent = last.title;
+  if (nowPlayingArtist) nowPlayingArtist.textContent = last.artist || "Apple Music";
+  const badge = $("#now-playing-badge");
+  if (badge) badge.style.display = "block";
+  if (last.artwork) {
+    const artImg = $("#now-playing-art");
+    const formatted = last.artwork.replace("{w}", "100").replace("{h}", "100").replace("{f}", "jpg");
+    if (artImg) {
+      artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
+    }
+  }
+  if (last.duration > 0) {
+    const pos = last.position || 0;
+    if (progressFill) progressFill.style.width = `${Math.min(100, (pos / last.duration) * 100)}%`;
+    if (currentTime) currentTime.textContent = formatTime(pos);
+    if (totalTime) totalTime.textContent = formatTime(last.duration);
+  }
+  // Paused, not active: nothing plays until the user asks for it.
+  state.streamPhase = "paused";
+  paintStreamPhase();
+}
+
+async function resumeLastSession() {
+  const saved = state.restore;
+  state.restore = null;
+  if (!saved || !saved.state || !saved.state.id) return;
+  const last = saved.state;
+  const queue = Array.isArray(saved.queue) && saved.queue.length ? saved.queue : [last.id];
+
+  optimisticallyPlay(
+    {
+      id: last.id,
+      title: last.title,
+      artist: last.artist,
+      artwork_url: last.artwork,
+      duration_ms: (last.duration || 0) * 1000,
+    },
+    queue.length
+  );
+
+  try {
+    await invoke("stream_play", { songId: last.id, queue, shuffle: saved.shuffle ?? null });
+    if (last.position > 1) {
+      state.streamPosition = last.position;
+      state.streamAnchor = Date.now() - last.position * 1000;
+      await invoke("stream_seek", { position: last.position });
+    }
+  } catch (err) {
+    console.error("Resume failed:", err);
+    showToast("Couldn't resume the last song.", "error");
+  }
+}
+
 // ─── Init ──────────────────────────────────────────────────────
 window.scanLibrary = scanLibrary;
 
@@ -1861,4 +2119,6 @@ checkAuthState().then(() => {
   loadLibrary().then(() => {
     syncPlaybackStatus();
   });
+  // Repaint the bar from the last session, but do not auto-play.
+  restoreLastSession();
 });

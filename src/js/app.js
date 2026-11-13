@@ -737,7 +737,7 @@ async function loadLibrary() {
     state.tracks = await invoke("get_tracks");
     state.albums = await invoke("get_albums");
     state.artists = await invoke("get_artists");
-    state.playlists = await invoke("get_playlists");
+    // Playlists are iCloud-only; they load via syncCloudPlaylists, not the local DB.
     trackCount.textContent = state.tracks.length;
     renderSidebarPlaylists();
   } catch (err) {
@@ -747,31 +747,20 @@ async function loadLibrary() {
 
 function renderSidebarPlaylists() {
   if (!playlistList) return;
+  const cloud = state.cloudPlaylists || [];
   playlistList.innerHTML = `
-    <div class="playlist-item default-liked">Liked Songs</div>
-    ${state.playlists
-      .map(
-        (p) => `
-      <div class="playlist-item" data-playlist-id="${p.id}">
-        ${escapeHtml(p.name)}
-      </div>
-    `
-      )
-      .join("")}
     ${
-      state.cloudPlaylists && state.cloudPlaylists.length > 0
-        ? `
-      <div style="font-size: 11px; font-weight: 700; color: var(--text-tertiary); margin: 16px 12px 6px; text-transform: uppercase; letter-spacing: 0.5px;">Apple Music Playlists</div>
-      ${state.cloudPlaylists
-        .map(
-          (cp) => `
+      cloud.length
+        ? cloud
+            .map(
+              (cp) => `
         <div class="playlist-item cloud-playlist" data-cloud-playlist-id="${cp.id}">
-          <span style="font-size: 12px; margin-right: 4px;">☁️</span> ${escapeHtml(cp.name)}
-        </div>
-      `
-        )
-        .join("")}
-    `
+          ${escapeHtml(cp.name)}
+        </div>`
+            )
+            .join("")
+        : state.auth.isAuthenticated
+        ? `<div class="playlist-item" style="cursor: default; color: var(--text-tertiary);">No playlists yet</div>`
         : ""
     }
     <div class="playlist-item create-playlist" id="create-playlist">
@@ -780,20 +769,12 @@ function renderSidebarPlaylists() {
     </div>
   `;
 
-  document.getElementById("create-playlist")?.addEventListener("click", handleCreatePlaylist);
+  document.getElementById("create-playlist")?.addEventListener("click", () => openPlaylistFormModal({}));
 }
 
+// Playlists are created in the user's Apple Music library, not locally.
 async function handleCreatePlaylist() {
-  const name = prompt("Enter new playlist name:");
-  if (name && name.trim()) {
-    try {
-      await invoke("create_playlist", { name: name.trim(), description: "" });
-      await loadLibrary();
-      if (state.currentView === "playlists") renderPlaylists();
-    } catch (err) {
-      console.error("Failed to create playlist:", err);
-    }
-  }
+  openPlaylistFormModal({});
 }
 
 // ─── View Renderers ────────────────────────────────────────────
@@ -979,26 +960,40 @@ async function renderArtists() {
 }
 
 function renderPlaylists() {
-  const hasLocal = state.playlists.length > 0;
-  const hasCloud = state.cloudPlaylists && state.cloudPlaylists.length > 0;
+  const cloud = state.cloudPlaylists || [];
 
-  if (!hasLocal && !hasCloud) {
+  if (!state.auth.isAuthenticated) {
+    mainView.innerHTML = `
+      <div class="view-header"><div class="view-title">Playlists</div></div>
+      <div class="empty-state">
+        <div class="empty-state-title">Sign in to see your playlists</div>
+        <div class="empty-state-desc">Your Apple Music playlists live in iCloud. Sign in with your Apple ID to load them here.</div>
+      </div>
+    `;
+    return;
+  }
+
+  const toolbar = `
+    <div style="display: flex; gap: 10px;">
+      <button class="welcome-action" id="sync-cloud-top-btn" style="margin: 0; padding: 8px 16px;">Sync</button>
+      <button class="welcome-action" id="new-playlist-top-btn" style="margin: 0; padding: 8px 16px;">+ New Playlist</button>
+    </div>`;
+
+  if (cloud.length === 0) {
     mainView.innerHTML = `
       <div class="view-header" style="display: flex; justify-content: space-between; align-items: center;">
         <div class="view-title">Playlists</div>
-        ${state.auth.isAuthenticated ? '<button class="welcome-action" id="sync-cloud-btn" style="margin: 0; padding: 8px 16px;">☁️ Sync iCloud</button>' : ''}
+        ${toolbar}
       </div>
       <div class="empty-state">
-        <svg class="empty-state-icon" width="64" height="64" viewBox="0 0 48 48" fill="currentColor">
-          <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/>
-        </svg>
         <div class="empty-state-title">No Playlists Yet</div>
-        <div class="empty-state-desc">Create your own playlist or sign in to sync your Apple Music iCloud playlists.</div>
+        <div class="empty-state-desc">Create a playlist — it is saved to your Apple Music library, so it appears on every device.</div>
         <button id="create-first-playlist-btn">Create Playlist</button>
       </div>
     `;
     document.getElementById("create-first-playlist-btn")?.addEventListener("click", handleCreatePlaylist);
-    document.getElementById("sync-cloud-btn")?.addEventListener("click", syncCloudPlaylists);
+    document.getElementById("new-playlist-top-btn")?.addEventListener("click", handleCreatePlaylist);
+    document.getElementById("sync-cloud-top-btn")?.addEventListener("click", syncCloudPlaylists);
     return;
   }
 
@@ -1006,72 +1001,35 @@ function renderPlaylists() {
     <div class="view-header" style="display: flex; justify-content: space-between; align-items: center;">
       <div>
         <div class="view-title">Playlists</div>
-        <div class="view-subtitle">${state.playlists.length} local · ${state.cloudPlaylists.length} iCloud</div>
+        <div class="view-subtitle">${cloud.length} playlist${cloud.length === 1 ? "" : "s"} · Apple Music</div>
       </div>
-      <div style="display: flex; gap: 10px;">
-        ${state.auth.isAuthenticated ? '<button class="welcome-action" id="sync-cloud-top-btn" style="margin: 0; padding: 8px 16px;">☁️ Sync iCloud</button>' : ''}
-        <button class="welcome-action" id="new-playlist-top-btn" style="margin: 0; padding: 8px 16px;">+ New Playlist</button>
-      </div>
+      ${toolbar}
     </div>
 
-    ${
-      hasCloud
-        ? `
-      <h3 style="margin: 20px 0 16px; font-size: 18px; font-weight: 700;">iCloud Playlists (Apple Music)</h3>
-      <div class="album-grid" style="margin-bottom: 32px;">
-        ${state.cloudPlaylists
-          .map((cp) => {
-            const artUrl = cp.artwork_url ? cp.artwork_url.replace("{w}", "300").replace("{h}", "300").replace("{f}", "jpg") : null;
-            return `
-            <div class="album-card cloud-playlist-card" data-cloud-playlist-id="${cp.id}">
-              <div class="album-card-art">
-                ${
-                  artUrl
-                    ? `<img src="${artUrl}" alt="${escapeHtml(cp.name)}" />`
-                    : `
-                  <div class="placeholder">
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="#fa2d48"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM19 18H6c-2.21 0-4-1.79-4-4 0-2.05 1.53-3.76 3.56-3.97l1.07-.11.5-.95C8.08 7.14 9.94 6 12 6c2.62 0 4.88 1.86 5.39 4.43l.3 1.5 1.53.11c1.56.1 2.78 1.41 2.78 2.96 0 1.65-1.35 3-3 3z"/></svg>
-                  </div>
-                `
-                }
-              </div>
-              <div class="album-card-title">${escapeHtml(cp.name)}</div>
-              <div class="album-card-artist"><span class="quality-badge" style="margin-right: 4px; font-size: 10px; background: rgba(250, 45, 72, 0.2); color: #fa2d48;">iCloud</span> ${cp.track_count || cp.tracks.length} songs</div>
-            </div>
-          `;
-          })
-          .join("")}
-      </div>
-    `
-        : ""
-    }
-
-    ${
-      hasLocal
-        ? `
-      <h3 style="margin: 20px 0 16px; font-size: 18px; font-weight: 700;">Local Playlists</h3>
-      <div class="album-grid">
-        ${state.playlists
-          .map(
-            (p) => `
-          <div class="album-card" data-playlist-id="${p.id}">
+    <div class="album-grid">
+      ${cloud
+        .map((cp) => {
+          const artUrl = cp.artwork_url ? cp.artwork_url.replace("{w}", "300").replace("{h}", "300").replace("{f}", "jpg") : null;
+          return `
+          <div class="album-card cloud-playlist-card" data-cloud-playlist-id="${cp.id}">
             <div class="album-card-art">
-              <div class="placeholder">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="#555">
-                  <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/>
-                </svg>
-              </div>
+              ${
+                artUrl
+                  ? `<img src="${artUrl}" alt="${escapeHtml(cp.name)}" />`
+                  : `
+                <div class="placeholder">
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="#fa2d48"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+                </div>
+              `
+              }
             </div>
-            <div class="album-card-title">${escapeHtml(p.name)}</div>
-            <div class="album-card-artist">${p.tracks.length} songs</div>
+            <div class="album-card-title">${escapeHtml(cp.name)}</div>
+            <div class="album-card-artist">${cp.track_count || (cp.tracks ? cp.tracks.length : 0)} songs${cp.can_edit ? "" : ' · <span title="Not editable">🔒</span>'}</div>
           </div>
-        `
-          )
-          .join("")}
-      </div>
-    `
-        : ""
-    }
+        `;
+        })
+        .join("")}
+    </div>
   `;
   document.getElementById("new-playlist-top-btn")?.addEventListener("click", handleCreatePlaylist);
   document.getElementById("sync-cloud-top-btn")?.addEventListener("click", syncCloudPlaylists);
@@ -1079,95 +1037,79 @@ function renderPlaylists() {
 
 async function showCloudPlaylistDetail(playlistId) {
   const playlist = state.cloudPlaylists.find((p) => p.id === playlistId);
-  const name = playlist ? playlist.name : "Cloud Playlist";
+  const name = playlist ? playlist.name : "Playlist";
   mainView.innerHTML = `
     <div class="view-header">
       <div class="view-title">${escapeHtml(name)}</div>
-      <div class="view-subtitle">Loading tracks from Apple Music...</div>
+      <div class="view-subtitle">Loading tracks from Apple Music…</div>
     </div>
   `;
 
+  let tracks = [];
   try {
-    let tracks = playlist && playlist.tracks && playlist.tracks.length > 0 ? playlist.tracks : [];
+    tracks = playlist && playlist.tracks && playlist.tracks.length > 0 ? playlist.tracks : [];
     if (tracks.length === 0) {
       tracks = await invoke("get_cloud_playlist_tracks", { playlistId });
     }
-
-    if (tracks.length === 0) {
-      mainView.innerHTML = `
-        <div class="view-header">
-          <div class="view-title">${escapeHtml(name)}</div>
-          <div class="view-subtitle">0 tracks</div>
-        </div>
-        <div class="empty-state">
-          <div class="empty-state-title">Empty Playlist</div>
-          <div class="empty-state-desc">This playlist has no tracks.</div>
-        </div>
-      `;
-      return;
-    }
-
-    mainView.innerHTML = `
-      <div class="view-header">
-        <div class="view-title">${escapeHtml(name)}</div>
-        <div class="view-subtitle">${tracks.length} songs · Apple Music Cloud</div>
-      </div>
-      <div class="track-list">
-        ${tracks
-          .map(
-            (song, i) => `
-          <div class="track-item stream-track" data-catalog-id="${song.id}" data-stream-url="${escapeHtml(song.preview_url || '')}" data-title="${escapeHtml(song.title)}" data-artist="${escapeHtml(song.artist)}" data-artwork="${escapeHtml(song.artwork_url || '')}" data-duration="${song.duration_ms ? song.duration_ms / 1000 : 30}">
-            <div class="track-number">${i + 1}</div>
-            <div class="track-info">
-              <div class="track-name">${escapeHtml(song.title)}</div>
-              <div class="track-artist">${escapeHtml(song.artist)} · ${escapeHtml(song.album)}</div>
-            </div>
-            <div class="track-quality">
-              ${song.has_lossless ? '<span class="quality-badge quality-lossless">Lossless</span>' : '<span class="quality-badge quality-lossless" style="background: rgba(250, 45, 72, 0.2); color: #fa2d48;">AAC</span>'}
-            </div>
-            <div class="track-duration">${song.duration_ms ? formatTime(song.duration_ms / 1000) : "--:--"}</div>
-          </div>
-        `
-          )
-          .join("")}
-      </div>
-    `;
   } catch (err) {
     mainView.innerHTML = `
       <div class="view-header">
         <div class="view-title">${escapeHtml(name)}</div>
-        <div class="view-subtitle">Error loading tracks: ${escapeHtml(String(err))}</div>
+        <div class="view-subtitle">Couldn't load tracks: ${escapeHtml(String(err))}</div>
       </div>
     `;
+    return;
   }
-}
 
-function showLocalPlaylistDetail(playlistId) {
-  const playlist = state.playlists.find((p) => p.id === playlistId);
-  if (!playlist) return;
+  const canEdit = !!(playlist && playlist.can_edit);
+  const artSource = (playlist && playlist.artwork_url) || (tracks[0] && tracks[0].artwork_url);
+  const artUrl = artSource
+    ? artSource.replace("{w}", "400").replace("{h}", "400").replace("{f}", "jpg")
+    : null;
 
   mainView.innerHTML = `
-    <div class="view-header">
-      <div class="view-title">${escapeHtml(playlist.name)}</div>
-      <div class="view-subtitle">${playlist.tracks.length} songs · Local Playlist</div>
-    </div>
-    <div class="track-list">
-      ${playlist.tracks
-        .map(
-          (track, i) => `
-        <div class="track-item" data-track-id="${track.id}">
-          <div class="track-number">${i + 1}</div>
-          <div class="track-info">
-            <div class="track-name">${escapeHtml(track.title)}</div>
-            <div class="track-artist">${escapeHtml(track.artist)} · ${escapeHtml(track.album)}</div>
-          </div>
-          <div class="track-duration">${formatTime(track.duration_secs)}</div>
+    <div class="album-detail">
+      <div class="album-detail-art">
+        ${artUrl ? `<img src="${artUrl}" alt="${escapeHtml(name)}" />` : `<div class="placeholder"></div>`}
+      </div>
+      <div class="album-detail-meta">
+        <div class="album-detail-kind">Playlist</div>
+        <h1 class="album-detail-title">${escapeHtml(name)}</h1>
+        <div class="album-detail-sub">${tracks.length} song${tracks.length === 1 ? "" : "s"}${canEdit ? "" : " · Not editable"}</div>
+        <div class="album-detail-actions">
+          <button class="play-pill" id="pl-play" ${tracks.length ? "" : "disabled"}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            Play
+          </button>
+          <button class="play-pill secondary" id="pl-shuffle" ${tracks.length ? "" : "disabled"}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+            Shuffle
+          </button>
+          ${canEdit ? `<button class="play-pill secondary" id="pl-menu" title="Playlist actions">⋯</button>` : ""}
         </div>
-      `
-        )
-        .join("")}
+      </div>
     </div>
+    ${
+      tracks.length
+        ? `<div class="track-list">${tracks.map((t, i) => renderCloudTrackRow(t, i + 1)).join("")}</div>`
+        : `
+      <div class="empty-state">
+        <div class="empty-state-title">Empty Playlist</div>
+        <div class="empty-state-desc">Search or browse, then use the + on a song to add it here.</div>
+      </div>`
+    }
   `;
+
+  document.getElementById("pl-play")?.addEventListener("click", () => {
+    if (tracks.length) playCatalogTracks(tracks, tracks[0].id, false);
+  });
+  document.getElementById("pl-shuffle")?.addEventListener("click", () => {
+    const pick = tracks[Math.floor(Math.random() * tracks.length)];
+    playCatalogTracks(tracks, pick?.id, true);
+  });
+  document.getElementById("pl-menu")?.addEventListener("click", (e) => {
+    openPlaylistActionsMenu(e.currentTarget, playlist);
+  });
 }
 
 function renderEmpty(title, desc) {
@@ -1458,22 +1400,22 @@ function catalogQueueFor(trackItem) {
 }
 
 document.addEventListener("click", async (e) => {
+  // 0. Add-to-playlist button on a track row (must beat the row's play handler).
+  const addToBtn = e.target.closest(".track-add-btn");
+  if (addToBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = addToBtn.closest(".track-item")?.dataset.catalogId;
+    if (id) openPlaylistPicker([id]);
+    return;
+  }
+
   // 1. Cloud Playlist Item Click
   const cloudItem = e.target.closest("[data-cloud-playlist-id]");
   if (cloudItem && !e.target.closest(".track-item")) {
     const cpId = cloudItem.dataset.cloudPlaylistId;
     if (cpId) {
       showCloudPlaylistDetail(cpId);
-      return;
-    }
-  }
-
-  // 2. Local Playlist Item Click
-  const localPlaylistItem = e.target.closest(".album-card[data-playlist-id], .playlist-item[data-playlist-id]");
-  if (localPlaylistItem && !e.target.closest(".track-item")) {
-    const pId = localPlaylistItem.dataset.playlistId;
-    if (pId) {
-      showLocalPlaylistDetail(pId);
       return;
     }
   }
@@ -1595,6 +1537,188 @@ document.addEventListener("click", async (e) => {
     }
   }
 });
+
+// ─── Playlists: create / rename / delete / add to ──────────────
+//
+// Playlists are Apple Music library playlists. Creation, rename, delete and
+// add-tracks all hit Apple's API (see api/client.rs). Everything here keeps the
+// cached `state.cloudPlaylists` in step so the UI never needs a full refetch.
+
+function openPlaylistFormModal({ playlist = null, trackIds = null, onSaved = null } = {}) {
+  const editing = !!playlist;
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width: 420px;">
+      <div class="modal-header">
+        <div class="modal-title">${editing ? "Rename Playlist" : "New Playlist"}</div>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label">Name</label>
+        <input id="pl-name" class="field-input" placeholder="My Playlist" value="${editing ? escapeHtml(playlist.name) : ""}" />
+        ${
+          editing
+            ? ""
+            : `<label class="field-label" style="margin-top: 12px;">Description</label>
+               <input id="pl-desc" class="field-input" placeholder="Optional" />`
+        }
+        <div style="display: flex; gap: 10px; margin-top: 18px; justify-content: flex-end;">
+          <button class="play-pill secondary" data-close>Cancel</button>
+          <button class="play-pill" id="pl-save">${editing ? "Save" : "Create"}</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const nameInput = overlay.querySelector("#pl-name");
+  nameInput?.focus();
+  nameInput?.select();
+
+  overlay.addEventListener("click", async (e) => {
+    if (e.target === overlay || e.target.closest("[data-close]")) {
+      overlay.remove();
+      return;
+    }
+    if (!e.target.closest("#pl-save")) return;
+
+    const name = (overlay.querySelector("#pl-name")?.value || "").trim();
+    if (!name) {
+      showToast("Playlist name can't be empty.", "error");
+      return;
+    }
+    const saveBtn = overlay.querySelector("#pl-save");
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      if (editing) {
+        await invoke("rename_cloud_playlist", { playlistId: playlist.id, name });
+        playlist.name = name; // keep the cached copy in step
+        showToast("Playlist renamed.");
+      } else {
+        const description = (overlay.querySelector("#pl-desc")?.value || "").trim();
+        await invoke("create_cloud_playlist", {
+          name,
+          description: description || null,
+          trackIds: trackIds && trackIds.length ? trackIds : null,
+        });
+        showToast("Saved to your Apple Music library.");
+      }
+      overlay.remove();
+      await syncCloudPlaylists();
+      if (onSaved) onSaved();
+      else if (state.currentView === "playlists") renderPlaylists();
+    } catch (err) {
+      showToast(String(err), "error");
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  });
+}
+
+function openPlaylistPicker(trackIds) {
+  const editable = (state.cloudPlaylists || []).filter((p) => p.can_edit);
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width: 420px;">
+      <div class="modal-header">
+        <div class="modal-title">Add to Playlist</div>
+        <button class="modal-close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        ${
+          editable.length
+            ? `<div class="playlist-picker-list">
+                 ${editable
+                   .map(
+                     (p) => `
+                   <div class="playlist-picker-item" data-pick="${p.id}">
+                     <span class="playlist-picker-name">${escapeHtml(p.name)}</span>
+                     <span class="playlist-picker-count">${p.track_count || 0} songs</span>
+                   </div>`
+                   )
+                   .join("")}
+               </div>`
+            : `<div class="queue-empty">No editable playlists yet. Create one, then add songs.</div>`
+        }
+        <button class="welcome-action" id="picker-new" style="margin-top: 14px; width: 100%;">+ New Playlist</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener("click", async (e) => {
+    if (e.target === overlay || e.target.closest("[data-close]")) {
+      overlay.remove();
+      return;
+    }
+    if (e.target.closest("#picker-new")) {
+      overlay.remove();
+      openPlaylistFormModal({ trackIds });
+      return;
+    }
+    const pick = e.target.closest("[data-pick]");
+    if (!pick) return;
+    try {
+      await invoke("add_to_cloud_playlist", { playlistId: pick.dataset.pick, trackIds });
+      showToast("Added to playlist.");
+      overlay.remove();
+      syncCloudPlaylists(); // refresh track counts
+    } catch (err) {
+      showToast(String(err), "error");
+    }
+  });
+}
+
+function openPlaylistActionsMenu(anchor, playlist) {
+  document.querySelectorAll(".menu-popover").forEach((m) => m.remove());
+  const rect = anchor.getBoundingClientRect();
+  const menu = document.createElement("div");
+  menu.className = "menu-popover";
+  menu.style.top = `${rect.bottom + 6}px`;
+  menu.style.left = `${Math.max(8, rect.left - 120)}px`;
+  menu.innerHTML = `
+    <div class="menu-item" data-act="rename">Rename</div>
+    <div class="menu-item danger" data-act="delete">Delete Playlist</div>`;
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener("click", () => menu.remove(), { once: true }), 0);
+
+  menu.addEventListener("click", async (e) => {
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (!act) return;
+    menu.remove();
+    if (act === "rename") {
+      openPlaylistFormModal({ playlist, onSaved: () => showCloudPlaylistDetail(playlist.id) });
+    } else if (act === "delete") {
+      if (!confirm(`Delete "${playlist.name}" from your Apple Music library? This cannot be undone.`)) return;
+      try {
+        await invoke("delete_cloud_playlist", { playlistId: playlist.id });
+        state.cloudPlaylists = state.cloudPlaylists.filter((p) => p.id !== playlist.id);
+        renderSidebarPlaylists();
+        showToast("Playlist deleted.");
+        state.currentView = "playlists";
+        renderPlaylists();
+      } catch (err) {
+        showToast(String(err), "error");
+      }
+    }
+  });
+}
+
+// Every catalog track row gets a + button once it appears, wherever it was
+// rendered from. One observer beats editing six row templates by hand.
+function decorateTrackRows(root = document) {
+  root.querySelectorAll(".track-item.stream-track:not(.decorated)").forEach((el) => {
+    el.classList.add("decorated");
+    const btn = document.createElement("button");
+    btn.className = "track-add-btn";
+    btn.title = "Add to Playlist";
+    btn.setAttribute("aria-label", "Add to Playlist");
+    btn.textContent = "＋";
+    el.appendChild(btn);
+  });
+}
+
+const trackRowObserver = new MutationObserver(() => decorateTrackRows(mainView));
+trackRowObserver.observe(mainView, { childList: true, subtree: true });
 
 // ─── Playback Controls ─────────────────────────────────────────
 

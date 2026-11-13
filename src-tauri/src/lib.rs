@@ -1071,6 +1071,67 @@ async fn get_cloud_playlist_tracks(
         .map_err(|e| e.to_string())
 }
 
+/// Create a playlist in the user's Apple Music library, optionally pre-filled.
+/// Returns the new playlist id.
+#[tauri::command]
+async fn create_cloud_playlist(
+    state: State<'_, AppState>,
+    name: String,
+    description: Option<String>,
+    track_ids: Option<Vec<String>>,
+) -> Result<String, String> {
+    let id = state
+        .api_client
+        .create_library_playlist(&name, description.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(ids) = track_ids {
+        if !ids.is_empty() {
+            state
+                .api_client
+                .add_tracks_to_library_playlist(&id, &ids)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(id)
+}
+
+#[tauri::command]
+async fn rename_cloud_playlist(
+    state: State<'_, AppState>,
+    playlist_id: String,
+    name: String,
+) -> Result<(), String> {
+    state
+        .api_client
+        .rename_library_playlist(&playlist_id, &name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_cloud_playlist(state: State<'_, AppState>, playlist_id: String) -> Result<(), String> {
+    state
+        .api_client
+        .delete_library_playlist(&playlist_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn add_to_cloud_playlist(
+    state: State<'_, AppState>,
+    playlist_id: String,
+    track_ids: Vec<String>,
+) -> Result<(), String> {
+    state
+        .api_client
+        .add_tracks_to_library_playlist(&playlist_id, &track_ids)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn sync_cloud_library(state: State<'_, AppState>) -> Result<SyncStats, String> {
     let mut stats = SyncStats::default();
@@ -1374,6 +1435,10 @@ pub fn run() {
             get_cloud_playlists,
             get_cloud_playlist_tracks,
             sync_cloud_library,
+            create_cloud_playlist,
+            rename_cloud_playlist,
+            delete_cloud_playlist,
+            add_to_cloud_playlist,
             play_stream_track,
             // Native FFI & Session Bridge
             get_native_bridge_status,

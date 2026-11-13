@@ -363,6 +363,172 @@ impl ApiClient {
 
         Ok(songs)
     }
+
+    /// Create a library (iCloud) playlist owned by the user. Returns its id.
+    ///
+    /// Measured contract: `POST /v1/me/library/playlists` with a bare
+    /// `{ "attributes": { "name" } }` body returns **201** and the new id under
+    /// `data[0].id`. Tracks are added separately (see `add_tracks_to_library_playlist`).
+    pub async fn create_library_playlist(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> anyhow::Result<String> {
+        if !self.auth.is_authenticated() {
+            anyhow::bail!("User is not authenticated with Apple ID");
+        }
+        let language = self.auth.language();
+        let url = format!("{}/v1/me/library/playlists?l={}", self.base_url, language);
+
+        let mut attrs = serde_json::json!({ "name": name });
+        if let Some(d) = description {
+            if !d.is_empty() {
+                attrs["description"] = Value::String(d.to_string());
+            }
+        }
+        let body = serde_json::json!({ "attributes": attrs });
+
+        let response = self
+            .http
+            .post(&url)
+            .headers(self.build_headers())
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status();
+        let json: Value = response.json().await.unwrap_or(Value::Null);
+        if !status.is_success() {
+            anyhow::bail!(
+                "Create playlist failed: HTTP {} ({})",
+                status,
+                apple_error(&json, "no detail")
+            );
+        }
+        json["data"][0]["id"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("Create playlist: response contained no id"))
+    }
+
+    /// Rename a library playlist.
+    ///
+    /// Deliberately **no `?l=` query parameter**: adding one makes Apple return
+    /// 500 (measured during the write probe). A bare `{ "attributes": { "name" } }`
+    /// body returns 204.
+    pub async fn rename_library_playlist(&self, playlist_id: &str, name: &str) -> anyhow::Result<()> {
+        if !self.auth.is_authenticated() {
+            anyhow::bail!("User is not authenticated with Apple ID");
+        }
+        let url = format!("{}/v1/me/library/playlists/{}", self.base_url, playlist_id);
+        let body = serde_json::json!({ "attributes": { "name": name } });
+
+        let response = self
+            .http
+            .put(&url)
+            .headers(self.build_headers())
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let json: Value = response.json().await.unwrap_or(Value::Null);
+            anyhow::bail!(
+                "Rename playlist failed: HTTP {} ({})",
+                status,
+                apple_error(&json, "no detail")
+            );
+        }
+        Ok(())
+    }
+
+    /// Delete a library playlist.
+    pub async fn delete_library_playlist(&self, playlist_id: &str) -> anyhow::Result<()> {
+        if !self.auth.is_authenticated() {
+            anyhow::bail!("User is not authenticated with Apple ID");
+        }
+        let url = format!("{}/v1/me/library/playlists/{}", self.base_url, playlist_id);
+        let response = self.http.delete(&url).headers(self.build_headers()).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let json: Value = response.json().await.unwrap_or(Value::Null);
+            anyhow::bail!(
+                "Delete playlist failed: HTTP {} ({})",
+                status,
+                apple_error(&json, "no detail")
+            );
+        }
+        Ok(())
+    }
+
+    /// Add tracks to a library playlist.
+    ///
+    /// Catalog songs are referenced as `type: "songs"` (numeric id); the user's
+    /// own library songs as `type: "library-songs"` (id prefixed `i.`). Both were
+    /// verified to return 204.
+    pub async fn add_tracks_to_library_playlist(
+        &self,
+        playlist_id: &str,
+        track_ids: &[String],
+    ) -> anyhow::Result<()> {
+        if !self.auth.is_authenticated() {
+            anyhow::bail!("User is not authenticated with Apple ID");
+        }
+        if track_ids.is_empty() {
+            return Ok(());
+        }
+        let language = self.auth.language();
+        let url = format!(
+            "{}/v1/me/library/playlists/{}/tracks?l={}",
+            self.base_url, playlist_id, language
+        );
+        let data: Vec<Value> = track_ids.iter().map(|id| playlist_track_ref(id)).collect();
+        let body = serde_json::json!({ "data": data });
+
+        let response = self
+            .http
+            .post(&url)
+            .headers(self.build_headers())
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let json: Value = response.json().await.unwrap_or(Value::Null);
+            anyhow::bail!(
+                "Add to playlist failed: HTTP {} ({})",
+                status,
+                apple_error(&json, "no detail")
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The `type` a track id takes inside a library playlist's `data` array.
+///
+/// Library songs carry an `i.` prefix and use `library-songs`; catalog songs use
+/// numeric ids and `songs`. Sending the wrong type is rejected by Apple.
+pub fn library_track_type(id: &str) -> &'static str {
+    if id.starts_with("i.") {
+        "library-songs"
+    } else {
+        "songs"
+    }
+}
+
+/// One entry of a library playlist's `{ "data": [...] }` track array.
+pub fn playlist_track_ref(id: &str) -> Value {
+    serde_json::json!({ "id": id, "type": library_track_type(id) })
+}
+
+/// Pull Apple's error `detail` (or `title`) out of a failed response body.
+fn apple_error(body: &Value, fallback: &str) -> String {
+    body["errors"]
+        .as_array()
+        .and_then(|errors| errors.first())
+        .and_then(|e| e["detail"].as_str().or_else(|| e["title"].as_str()))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 pub fn parse_single_playlist_json(p: &Value) -> CloudPlaylist {
@@ -470,5 +636,27 @@ pub fn parse_single_album_json(a: &Value) -> StoreAlbum {
         release_date: attrs["releaseDate"].as_str().map(|s| s.to_string()),
         artwork_url: attrs["artwork"]["url"].as_str().map(|s| s.to_string()),
         tracks,
+    }
+}
+
+#[cfg(test)]
+mod playlist_write_tests {
+    use super::{library_track_type, playlist_track_ref};
+
+    #[test]
+    fn library_ids_use_library_songs_type() {
+        assert_eq!(library_track_type("i.mmpeDgktg0KWq42"), "library-songs");
+    }
+
+    #[test]
+    fn catalog_ids_use_songs_type() {
+        assert_eq!(library_track_type("1696166346"), "songs");
+    }
+
+    #[test]
+    fn track_ref_carries_id_and_type() {
+        let r = playlist_track_ref("1696166346");
+        assert_eq!(r["id"], "1696166346");
+        assert_eq!(r["type"], "songs");
     }
 }

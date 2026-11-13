@@ -133,3 +133,22 @@ Pada lifecycle setup Tauri, window utama diberi pemanggilan eksplisit `main_wind
    - `cargo check --all-targets` menghasilkan 0 warning dan 0 error.
    - `npm run build` selesai dalam 193 ms.
    - `cargo build --release` menghasilkan single binary `src-tauri/target/release/app.exe` yang siap dijalankan mandiri.
+
+---
+
+## 5. Status revisit (2026-11-13)
+
+Still solved. The window shows reliably on every recorded launch:
+
+```
+[SETUP] Found main window: label=main
+[SETUP] After show: is_visible: Ok(true)
+```
+
+Two notes for future readers:
+
+- The DLL staging described in section 3 belongs to the **abandoned native-decrypt path**
+  (`src-tauri/src/drm/**`). Streaming the MVP does not need it, so the bridge directory and
+  the `SetDllDirectoryW` guard are not on the critical path anymore.
+- The test counts above (128) still hold at 2026-11-13, but no test covers the streaming
+  path. See `docs/03-implementation/01-WHATS-DONE.md`.

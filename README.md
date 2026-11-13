@@ -1,114 +1,93 @@
 # Apple Music RS
 
-> A high-performance Apple Music client built with Rust + Tauri.
-> **5-7x less memory** than the official app. Same features. Zero bloat.
+> A personal Apple Music client for Windows, built with Rust + Tauri.
+> Uses your own Apple Music subscription. Costs $0 in developer fees.
 
-## System Requirements
+## What this is
 
-- **OS**: Windows 10/11 (x64)
-- **Rust**: 1.98+
-- **Node**: 18+
-- **Disk**: ~15 MB (vs official app's 500 MB+)
+A hobby project: reproduce the Apple Music desktop experience in a small native shell, using
+the subscription you already pay for. No Apple Developer Program, no paid APIs, no telemetry.
 
-## Quick Start
+**MVP:** sign in → browse and search the catalog → play full songs, with a playback bar that
+matches what the player is actually doing.
+
+## Status
+
+| Area | State |
+|------|-------|
+| Apple ID sign-in ($0, web token + cookie capture) | ✅ works |
+| Full-song playback (hidden MusicKit player + Windows PlayReady) | ✅ works |
+| Play / pause / resume | ✅ works |
+| Browse: Listen Now, Charts, Search + typeahead | ✅ works |
+| Seek, next/prev, shuffle, repeat while streaming | 🚧 in progress |
+| Truthful progress / duration / now-playing | 🚧 in progress |
+| Album detail, iCloud library views | 🚧 backend ready, UI pending |
+| Local file playback | ⏸ parked — see `docs/03-implementation/04-PARKED-LOCAL-PLAYBACK.md` |
+| Lossless / Atmos | ⛔ out of reach on this architecture (AAC 256 ceiling) |
+
+Known bugs and their fixes: [`docs/04-bugs/`](docs/04-bugs/).
+Ordered work plan: [`docs/03-implementation/03-TO-DO.md`](docs/03-implementation/03-TO-DO.md).
+
+## How it plays music
+
+Apple encrypts streams with FairPlay, and the license challenge can only be produced by a real
+CDM. So the app does not try to decrypt anything. It hosts Apple's own MusicKit player in a
+**hidden WebView2** that shares your signed-in profile, drives it with injected JavaScript,
+and lets the **PlayReady CDM** that ships with Windows handle the rest.
+
+```
+click a song → invoke("stream_play") → hidden webview → MusicKit.play() → PlayReady → audio
+```
+
+Every playback command is queued inside the page and carries a nonce, so a click that arrives
+before MusicKit has loaded still runs, exactly once.
+
+## Requirements
+
+- Windows 10/11 (x64)
+- Rust 1.81+ and Node.js 18+ to build
+- An Apple Music subscription to play anything
+
+## Build & run
 
 ```bash
-# Install dependencies
 npm install
-
-# Run in development mode
-cargo tauri dev
-
-# Build for production
-npm run build && cargo tauri build
+npm run tauri dev        # development, hot reload
+npm run tauri build      # MSI / NSIS installers
 ```
 
-## Architecture
+Production binary: `src-tauri/target/release/app.exe` (~20 MB).
+
+## Project layout
 
 ```
-┌─────────────────────────────────────────────┐
-│              Tauri Shell (WebView2)          │
-│  ┌──────────┬────────────────────────────┐  │
-│  │ Sidebar  │   Album Grid / Track List   │  │
-│  │ (nav)    │   (dynamic content)         │  │
-│  └──────────┴────────────────────────────┘  │
-│  ┌────────────────────────────────────────┐ │
-│  │        Playback Bar (persistent)        │ │
-│  └────────────────────────────────────────┘ │
-├─────────────────────────────────────────────┤
-│              Rust Backend                    │
-│  Audio (symphonia+rodio) | Library (SQLite) │
-│  API (reqwest) | Image Cache                │
-└─────────────────────────────────────────────┘
+index.html                  UI shell (sidebar, main view, playback bar)
+src/js/app.js               UI logic and Tauri command calls
+src/styles/app.css          Apple-style dark theme
+src-tauri/src/lib.rs        48 Tauri commands, hidden player, auth, lifecycle
+src-tauri/src/api/          REST client, auth, session import
+src-tauri/src/audio/        parked local engine (symphonia + rodio)
+src-tauri/src/library/      parked local library (SQLite)
+src-tauri/src/drm/          abandoned native-decrypt attempt (diagnostics only)
+src-tauri/capabilities/     window permissions for the remote player webview
+docs/                       strategy, architecture, gaps, bugs
 ```
 
-## Resource Targets
+## Documentation
 
-| Metric | Official Apple Music | Apple Music RS | Improvement |
-|--------|---------------------|----------------|-------------|
-| RAM (idle) | ~200-350 MB | ~40-60 MB | **5-7x less** |
-| RAM (playing) | ~300-500 MB | ~60-100 MB | **5x less** |
-| CPU (idle) | ~5-15% | ~1-3% | **5x less** |
-| CPU (playing) | ~8-20% | ~3-8% | **2-3x less** |
-| Disk space | ~500 MB - 1 GB | ~15-30 MB | **20-30x smaller** |
-| Startup time | ~3-8 seconds | ~0.5-1 second | **5x faster** |
-| Background processes | 3-5 processes | 1 binary | **Clean** |
+| Start here | |
+|---|---|
+| `docs/01-getting-started/01-STRATEGY.md` | What this is and the plan |
+| `docs/01-getting-started/02-HOW-TO-RUN.md` | Build, sign in, test, troubleshoot |
+| `docs/02-architecture/HOW-IT-WORKS.md` | The real flows, including the hidden player |
+| `docs/03-implementation/03-TO-DO.md` | P0–P4 work items |
+| `AGENTS.md` | Rules for agents working in this repo |
 
-## Features
+## Scope
 
-- ✅ **Local music playback** — MP3, M4A, AAC, FLAC, WAV, OGG
-- ✅ **Apple Music dark theme** — pixel-perfect UI
-- ✅ **Library management** — scan, organize, browse by album/artist
-- ✅ **Playback controls** — play/pause, next/prev, volume, seek, shuffle, repeat
-- ✅ **Album grid view** — with play overlay on hover
-- ✅ **Track list** — with lossless/atmos badges
-- ✅ **Live search** — wired to Apple Music API
-- 🔲 **Lossless ALAC playback** — high-res audio support
-- 🔲 **Apple Music streaming** — catalog search, recommendations
-- 🔲 **Apple ID sign-in** — MusicKit authentication
-- 🔲 **iCloud library sync** — sync across devices
-- 🔲 **Dolby Atmos** — spatial audio
-- 🔲 **Time-synced lyrics** — karaoke-style
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| UI | HTML + CSS (Apple dark theme) |
-| Webview | Tauri v2 + WebView2 |
-| Backend | Rust (2021 edition) |
-| Audio | symphonia + rodio |
-| Database | SQLite (rusqlite) |
-| HTTP | reqwest |
-| API | Apple Music REST API |
-
-## Project Structure
-
-```
-apple-music-rs/
-├── index.html              ← Apple Music UI
-├── src/
-│   ├── js/app.js           ← Frontend logic + Tauri commands
-│   └── styles/app.css      ← Apple Music dark theme
-├── src-tauri/
-│   ├── Cargo.toml          ← Rust dependencies
-│   ├── tauri.conf.json     ← Window config
-│   └── src/
-│       ├── main.rs         ← Entry point
-│       ├── lib.rs          ← 15 Tauri commands
-│       ├── audio/          ← Audio engine
-│       ├── library/        ← Library management
-│       └── api/            ← Apple Music API client
-├── docs/
-│   ├── decoded-spec.md     ← Full reverse engineering report
-│   └── plan/
-│       ├── architecture.md ← System architecture
-│       └── README.md       ← Development plan
-├── .opencode/skills/
-│   ├── ponytail/           ← Lazy senior dev skill
-│   └── rea/                ← Reverse engineering skill
-└── opencode.jsonc          ← OpenCode config
-```
+Personal use only. It borrows the public MusicKit developer token that Apple ships in its own
+web bundle and relies on your existing subscription and the CDM already installed on Windows.
+It is not distributed, and it does not circumvent the subscription.
 
 ## License
 

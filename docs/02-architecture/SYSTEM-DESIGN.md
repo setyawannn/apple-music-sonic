@@ -1,142 +1,127 @@
-# Agent Architecture — Apple Music RS
+# Apple Music RS — System Design
 
-## System Design
+> Last updated: 2026-11-13
+> Runtime truth lives in `HOW-IT-WORKS.md`. This file describes structure.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Tauri Shell (Window)                  │
-│  ┌──────────────┬────────────────────────────────────┐  │
-│  │              │                                    │  │
-│  │   Sidebar    │       Content Area                 │  │
-│  │   ┌──────┐   │   ┌──────────────────────────┐    │  │
-│  │   │Library│   │   │  Album Grid / Track List  │    │  │
-│  │   │Listen │   │   │                          │    │  │
-│  │   │Browse │   │   │  ┌───┐ ┌───┐ ┌───┐      │    │  │
-│  │   │Radio  │   │   │  │ A │ │ B │ │ C │      │    │  │
-│  │   │       │   │   │  └───┘ └───┘ └───┘      │    │  │
-│  │   │Albums │   │   │                          │    │  │
-│  │   │Artists│   │   │  Search Results           │    │  │
-│  │   │       │   │   │  Playlists                │    │  │
-│  │   └──────┘   │   └──────────────────────────┘    │  │
-│  └──────────────┴────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │           Playback Bar (persistent)                 │  │
-│  │  ┌──────┬───────────┬──────────────────────────┐   │  │
-│  │  │ Art  │  Title    │  ◄◄  ►II  ►►  ████░░   │   │  │
-│  │  │      │  Artist   │  0:42 ─────── 3:27  🔊  │   │  │
-│  │  └──────┴───────────┴──────────────────────────┘   │  │
-│  └────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-         ▲                          │
-         │     invoke() commands    │
-         │                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                Rust Backend (src-tauri/)                  │
-│                                                          │
-│  ┌───────────┐  ┌──────────┐  ┌──────────────────┐      │
-│  │  Library  │  │  Audio   │  │  Apple Music API  │      │
-│  │  Module   │  │  Engine  │  │  Client           │      │
-│  │           │  │          │  │                   │      │
-│  │ • SQLite  │  │• symphonia│ │• reqwest HTTP     │      │
-│  │ • Models  │  │• rodio   │  │• Catalog search   │      │
-│  │ • Import  │  │• Queue   │  │• Auth tokens      │      │
-│  │ • Search  │  │• Volume  │  │• Recommendations  │      │
-│  └───────────┘  └──────────┘  └──────────────────┘      │
-│                                                          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │            Image Cache + Utilities                │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-```
+---
 
-## Data Flow
+## Layers
 
 ```
-User Action (click, search, play)
-    │
-    ▼
-Frontend JS (src/js/app.js)
-    │
-    ├── invoke("scan_library")          → Rust: scans ~/Music
-    ├── invoke("get_albums")            → Rust: returns Vec<Album>
-    ├── invoke("play_track", {id})      → Rust: symphonia decoder → rodio output
-    ├── invoke("search_catalog", {...})  → Rust: reqwest → amp-api.music.apple.com
-    ├── invoke("set_volume", {vol})     → Rust: updates audio state
-    └── invoke("seek_to", {pos})        → Rust: seeks in current track
+┌─────────────────────────────────────────────────────────────────────┐
+│ Presentation — WebView2, local page                                 │
+│   index.html · src/styles/app.css · src/js/app.js                    │
+│   Views: Listen Now · Browse · Radio · Library · Playlists ·         │
+│          Albums · Artists                    (+ persistent transport) │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │  invoke() / listen()
+┌──────────────────────────▼──────────────────────────────────────────┐
+│ Tauri command layer — src-tauri/src/lib.rs                            │
+│   48 commands, window lifecycle, event emit                          │
+└──────┬───────────────────┬──────────────────────┬───────────────────┘
+       │                   │                      │
+┌──────▼──────┐   ┌────────▼─────────┐   ┌────────▼──────────────────┐
+│  api/       │   │  hidden player    │   │  parked: audio/ library/  │
+│  reqwest +  │   │  WebView2 at      │   │  abandoned: drm/          │
+│  auth       │   │  music.apple.com  │   │                           │
+└─────────────┘   └────────┬─────────┘   └───────────────────────────┘
+                           │
+                    Windows PlayReady CDM
 ```
 
-## Component Communication
-
-```
-┌──────────────────────────────────────────────┐
-│                Frontend (WebView2)             │
-│                                               │
-│  State: tracks[], albums[], playlists[]       │
-│  UI: Reactivity via manual re-render          │
-│  IPC: @tauri-apps/api/core → invoke()         │
-└──────────────────┬───────────────────────────┘
-                   │ JSON serialization
-                   ▼
-┌──────────────────────────────────────────────┐
-│            Rust Backend (Tauri)                │
-│                                               │
-│  State: AppState { library, audio, api }      │
-│  Concurrency: Mutex<T> for shared state       │
-│  Threading: Tokio async runtime               │
-└──────────────────────────────────────────────┘
-```
-
-## State Management
-
-| Component | State | Storage |
-|-----------|-------|---------|
-| Library | `Vec<Track>`, `Vec<Album>`, `Vec<Playlist>` | In-memory + SQLite (future) |
-| Audio | `PlaybackStatus { state, track, position, volume }` | In-memory `Mutex` |
-| API | `Client { base_url, storefront, language }` | In-memory `Mutex` |
-| UI | Current view, search query, selected item | Frontend JS memory |
-
-## Module Dependency Graph
+## Module graph
 
 ```
 main.rs
-  └── lib.rs (Tauri builder, command handlers)
-       ├── audio/  ← Engine, PlaybackStatus
-       ├── library/ ← Track, Album, Playlist, scan, grouping
-       └── api/    ← Client, StoreSong, StoreAlbum
+└── lib.rs  (AppState { library, audio_engine, api_client })
+     ├── api/      AuthManager · ApiClient · LocalSessionReader · models
+     ├── audio/    Engine · QueueManager · SymphoniaSource · StreamCache   [PARKED]
+     ├── library/  Library · Database · Scanner · ArtworkManager          [PARKED]
+     └── drm/      AppLocator · NativeLibrary · CoreAudio/CoreMedia/CoreFP [ABANDONED]
 ```
 
-## Key Design Decisions
+Only `lib.rs`, `api/`, and the hidden-player code are in the product's critical path.
+`audio/` and `library/` are retained for compilation and reference; `drm/` feeds two
+diagnostics commands.
 
-1. **Frontend-driven UI**: HTML/CSS in WebView2 handles all rendering. Rust is strictly backend.
-2. **Command pattern**: Every user action maps to exactly one `#[tauri::command]`.
-3. **Mutex-guarded state**: Shared state uses `std::sync::Mutex` for thread safety.
-4. **Async-ready**: Tokio runtime available for HTTP requests and audio decoding.
-5. **Minimal IPC payloads**: Only serialized JSON across the bridge — no DOM access from Rust.
+## Frontend state (in-memory, no store library)
 
-## Security Boundaries
-
-```
-User Input (search, volume)
-  → Frontend (sanitized by JS)
-    → invoke() (serialized as JSON)
-      → Tauri IPC (validated by schema)
-        → Rust command (type-safe)
-          → System (file I/O, audio output)
+```js
+state = {
+  auth: { isAuthenticated, storefront, userTokenMasked },
+  tracks, albums, artists, playlists, cloudPlaylists,   // library views
+  playback: { isPlaying, currentTrackId, duration, position, volume,
+              isShuffle, repeatMode },                   // PARKED local player
+  streamingActive, streamIsPlaying, streamPosition,
+  streamDuration, streamAnchor                            // hidden player (optimistic)
+}
 ```
 
-- `tauri-plugin-fs`: scoped file access
-- `tauri-plugin-dialog`: OS-native file picker
-- CSP set to `null` (relaxed for local development)
+`syncPlaybackStatus()` runs every 250 ms. If `streamingActive` it takes the streaming branch
+and returns; otherwise it polls `get_playback_status` from the parked local engine. That
+fork is a known design wart and disappears when the streaming state channel lands.
 
-## Performance Targets
+## Data flow (current)
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Startup time | <1s | `time cargo tauri dev` |
-| RAM idle | ~40-60 MB | Task Manager |
-| RAM playing | ~60-100 MB | Task Manager |
-| CPU idle | <3% | Task Manager |
-| CPU decoding | <10% | Task Manager |
-| Binary size | <15 MB | `ls -lh src-tauri/target/release/` |
-| Library scan (10k tracks) | <5s | Manual timing |
-| UI frame rate | 60fps | Chrome DevTools |
+| User action | Path |
+|-------------|------|
+| Click catalog song | optimistic state → `invoke("stream_play")` → `player_command` → JS queue → MusicKit |
+| Click play/pause | `stream_pause` / `stream_resume` (or local commands when the local engine owns playback) |
+| Search | `invoke("search_catalog")` → `amp-api.music.apple.com` |
+| Load Listen Now | `get_recommendations` |
+| Load Browse | `get_charts` |
+| Playlists | `get_cloud_playlists` (+ parked `get_playlists`) |
+| Sign in | WebView2 window → cookie poll → validate → persist → emit `auth-success` |
+| Import session | cookie SQLite → validate → persist |
+
+### Not wired yet (backend exists)
+
+`get_personal_library` · `get_catalog_album` · `sync_cloud_library` · `stream_seek` ·
+`stream_stop` — see `docs/03-implementation/02-WHATS-MISSING.md`.
+
+## Concurrency model
+
+- Tauri commands run on the async runtime (Tokio) or on a blocking thread for pure sync work.
+- `AppState` holds `Mutex<library::Library>` and an `audio::Engine`; the streaming path does
+  not touch either.
+- The state listener runs its own Tokio task accepting TCP connections on `127.0.0.1:38471`,
+  spawning one task per request.
+- The hidden player is driven with `webview.eval()`. There is no shared lock between the
+  player and the local engine.
+
+## Design decisions
+
+1. **Borrow Apple's CDM instead of reimplementing it.** A license challenge requires a real
+   CDM; the native FFI route cannot produce audio. Cost: AAC 256 ceiling, extra process.
+2. **Queue commands inside the page.** Removes the "is it ready yet?" retry loop and makes
+   cold-start clicks work.
+3. **Nonce per user action.** Repeat clicks work; duplicate delivery is idempotent.
+4. **Pre-warm the player at startup.** Moves page-load latency off the first click.
+5. **Optimistic UI on click.** The playback bar updates instantly even when the player is
+   still waking up.
+6. **Frontend-driven rendering.** Rust is a command backend; no SSR, no framework.
+7. **Park, don't delete, local playback.** Keeps the build green and the decision reversible.
+
+## Boundaries and permissions
+
+| Boundary | Rule |
+|----------|------|
+| Main window | local page; CSP relaxed to `null` |
+| Hidden player | remote origin `https://music.apple.com/*`; needs `capabilities/player.json` |
+| Loopback state port | `127.0.0.1:38471`, local only, unauthenticated by design |
+| Secrets on disk | `%APPDATA%\AppleMusicRS\session.json`; never committed |
+| WebView2 profile | `%LOCALAPPDATA%\com.applemusicrs.desktop\auth_profile` |
+
+## Performance — targets vs measurements
+
+| Metric | Target | Measured |
+|--------|--------|----------|
+| Binary size | <15 MB | ~20 MB release (historical figure) |
+| RAM idle | 40–60 MB | **not measured** |
+| RAM playing | 60–100 MB | **not measured** |
+| Startup | <1 s | not measured |
+| First-click audio | instant | ~4–6 s on a cold player, faster after pre-warm |
+| Time to truthful UI | — | **not achieved** (state channel dead) |
+
+Do not repeat the old "5–7× less memory than the official app" claim without measuring it.
+That number came from a native-decoder design that was never built.

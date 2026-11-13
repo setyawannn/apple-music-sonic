@@ -1,76 +1,68 @@
-# Bug: Play Click Has 5-15 Second Delay
+# Bug 01 — Play click felt 5–15 s delayed
 
-## Symptoms
-- User clicks a song to play
-- Audio starts immediately (music plays, timer runs)
-- UI shows nothing for 5-15 seconds
-- Then playback bar, artwork, title, artist all snap to current state
+> **Status: partially fixed. The original cause is gone; a different one replaced it.**
+> Opened: 2026-11-10 · Updated: 2026-11-13
+> Superseded in part by `03-PLAYER-STATE-CHANNEL.md`
 
-## Root Cause
+---
 
-The delay is caused by **three stacked timers**:
+## What users saw
 
-### 1. `player_command` retry loop (up to 7.2s delay)
-File: `src-tauri/src/lib.rs:410-420`
+Click a song → audio starts → the playback bar stays empty (or stale) for 5–15 s → then
+artwork, title, and time snap into place.
+
+## The original cause — three stacked timers
+
+| # | Cause | Where |
+|---|-------|-------|
+| 1 | `player_command` retried 6 × with a **mandatory 1200 ms sleep after every attempt**, including successful ones → 7.2 s floor | old `lib.rs` retry loop |
+| 2 | First click had to **build the hidden WebView2 and load music.apple.com** (2–5 s) | old `ensure_player` called only on first play |
+| 3 | A 300 ms × 200 poll waited up to **60 s** for MusicKit to exist before commands could run | old bootstrap |
+
+Everything above compounded, and the UI had no optimistic update, so “audio plays but the UI
+shows nothing” was the literal truth.
+
+## What was fixed
+
+| Fix | Implementation | Verified |
+|-----|----------------|----------|
+| Retry loop deleted | Page-side queue (`window.__mkQueue`) + `__mkDrain`; a command issued before MusicKit loads is parked and runs when ready | ✅ code |
+| Pre-warm the player | `setup()` calls `ensure_player()` while the user is still browsing | ✅ code |
+| Transition-driven reports | listeners on `playbackStateDidChange`, `nowPlayingItemDidChange`, `playbackTimeDidChange`; report tick 250 ms | ⚠️ code exists, channel is dead — see below |
+| Optimistic UI | `app.js` writes title/artist/artwork and sets streaming state **before** awaiting the command | ✅ code |
+| Repeat clicks | per-click nonce instead of a 10 s same-song lock | ✅ code |
+
+Result: the 7.2 s retry tax and the first-click page build are gone.
+
+## What replaced it — the current delay
+
+`player_command` dispatches the job, then:
+
 ```rust
-for attempt in 0..6 {
-    // eval...
-    tokio::time::sleep(Duration::from_millis(1200)).await;
-}
+if PLAYER_READY.load(Ordering::SeqCst) { return Ok(()); }
+tokio::time::timeout(Duration::from_secs(30), player_ready_signal().notified()).await
 ```
-**Bug 1a:** This ALWAYS waits 1200ms between iterations even if the first succeeds.
-**Bug 1b:** 6 retries × 1200ms = 7.2 seconds minimum even when everything works.
 
-### 2. Hidden WebView2 first load (2-5s)
-File: `src-tauri/src/lib.rs:369-386`
-```rust
-let url = "https://music.apple.com/id/";
-// Builds hidden WebView2, navigates to apple.com
-```
-On first play, the hidden WebView2 needs to:
-- Create the window
-- Navigate to music.apple.com/id/
-- Wait for page + MusicKit JS bundle to load (2-5 seconds)
+`PLAYER_READY` is set only by `POST /ready` from the page — and that request **never arrives**
+because music.apple.com's CSP blocks loopback `fetch()`. Confirmed across six dev sessions:
+zero `/ready`, `/state`, or `/debug` requests.
 
-### 3. MusicKit ready poll (up to 60s)
-File: `src-tauri/src/lib.rs:309-314`
-```javascript
-var tries = 0;
-var t = setInterval(function () {
-    tries += 1;
-    if (got() || tries > 200) clearInterval(t);
-}, 300);
-```
-Polls every 300ms up to 200 times (60 seconds) for MusicKit to be ready.
-`window.__mkDo` just silently returns if not ready yet (the `if (!window.__mkDo) return;` path isn't in the bootstrap, but `__mkReady` promise doesn't resolve until MusicKit loads).
+Consequences:
 
-### The Audio Timing Mismatch
-The `player-state` events POST to `127.0.0.1:38471/state` once per second:
-```javascript
-setInterval(report, 1000);
-```
-So even after playback starts, the UI can lag up to 1 second behind. And the `streamAnchor` calculation:
-```javascript
-state.streamAnchor = Date.now() - state.streamPosition * 1000;
-```
-Assume state arrives 8 seconds into the song, the position jumps immediately to 0:08.
+1. `stream_play` hangs for 30 seconds and then returns `Err`.
+2. The frontend `catch` resets `streamingActive` / `streamIsPlaying`, so the icon flips back
+   to ▶ roughly 30 s after a click — even though audio is still playing.
+3. There is no truthful progress or duration at all.
 
-## Why Audio Plays But UI Doesn't Update
+So the *original* 5–15 s delay is fixed, and the *observed* delay is now a 30-second hang plus
+a UI reset. That is worse than what the fix removed, which is why this bug is not closed.
 
-The hidden WebView2 successfully calls `MusicKit.play()` which starts audio immediately through the WebView2 CDM. But the state reporting loopback (`report()` function via `fetch()`) doesn't fire for up to 1 second after playback starts, and the retry loop in `player_command` blocks the Rust side from processing incoming state events.
+## Correct fix
 
-## Fix Plan
+`03-PLAYER-STATE-CHANNEL.md`, steps 1–2: drop the readiness wait, and report state through
+`document.title` polled by Rust. No CSP, no timeout, no reset.
 
-### Immediate (Reduces delay from ~10s to ~2s)
-1. **Break early on success** — return from `player_command` immediately after first successful `eval()`, not after 6 retries
-2. **Reduce retry interval** — change 1200ms to 200ms
-3. **Reduce initial guesses** — 6 → 3 attempts
+## Lesson
 
-### Medium (Reduces delay from ~2s to ~500ms)
-4. **Pre-load the WebView2 on app startup** — `ensure_player()` at setup, not on first play click
-5. **Pre-warm MusicKit** — after page loads, wait for MusicKit to be ready before user clicks play
-
-### Long-term
-6. **Decrease `report` interval** — 1000ms → 250ms for smoother progress
-7. **Send state immediately on play** — attach a callback to `musicdidplay` event
-8. **Show "Loading..." in playback bar** — don't show stale "No Track Selected" while waiting
+The hidden player needs **no** readiness handshake. The page queue already guarantees
+ordering. Any future "wait for ready" logic is a regression.

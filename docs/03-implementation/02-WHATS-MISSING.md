@@ -1,78 +1,116 @@
-# Apple Music RS — What's Missing
+# Apple Music RS — What's Missing (MVP gaps)
 
-Only one thing stops the app from playing full lossless songs: **the FairPlay streaming engine.**
+> Last updated: 2026-11-13
+> Scope: only what blocks "clone Apple Music". Local file playback is parked, not listed.
 
 ---
 
-## The Missing Pipeline
+## Gap 1 — The player cannot talk back (P0, blocking everything)
 
-Everything below exists ✅ but hasn't been wired into a single end-to-end flow:
+**Symptom.** No real position, duration, or now-playing data. Progress is
+`Date.now() - streamAnchor`. The play icon can revert ~30 s after pressing play.
 
-```
-1. Get HLS URL for a song
-   → API endpoint: we call search_catalog, get song metadata
-   → BUT: we never fetch the full-song HLS playlist URL
-   → NEED: investigate which API parameter returns full HLS vs 30s preview
-   → File: api/client.rs — needs a get_stream_url(song_id) method
+**Cause.** `PLAYER_BOOTSTRAP` reports state with
+`fetch('http://127.0.0.1:38471/state')`. music.apple.com's CSP `connect-src` blocks it before
+it leaves the page. Across every recorded run the listener received **zero** requests, so
+`PLAYER_READY` never becomes true and `player_command` waits 30 s
+(`lib.rs:465-473`) then returns `Err`. The frontend's `catch` (`app.js:1084-1087`) resets the
+optimistic state.
 
-2. Parse the HLS m3u8
-   → PARSER EXISTS: stream.rs HlsParser
-   → parse_master() — finds best quality variant
-   → parse_media() — lists encrypted segments
-   → BUT: never called for streaming
+**Fix.** Two independent steps:
 
-3. Request content key
-   → CoreMedia bridge has FigContentKeyBoss function pointer
-   → Takes an skd:// URL from the m3u8 #EXT-X-KEY tag
-   → BUT: never called
-   → NEED: a function that calls FigContentKeyBoss with the key URL
+1. Delete the readiness wait. The page queue already handles ordering, so
+   `player_command` should dispatch and return `Ok(())` immediately.
+2. Add a CSP-proof channel. Cheapest: the injected script writes a compact JSON string to
+   `document.title`, and Rust polls `webview.title()` every 250 ms, emitting `player-state`.
+   No network, no capability change. Alternative: `window.ipc.postMessage` via Tauri's
+   internals (more moving parts).
 
-4. Decrypt content key
-   → CoreFP bridge has all 6 obfuscated ordinals
-   → CoreKE handles key exchange protocol
-   → BUT: never called
-   → NEED: a function that passes encrypted key through CoreFP ordinals
+**Evidence:** `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md`
 
-5. Decrypt HLS segments
-   → FigSampleBufferSetDecryptor pointer exists in CoreMedia bridge
-   → Takes: AES key, IV, encrypted data → clear CMSampleBuffer
-   → BUT: never called
-   → NEED: a function that downloads segment → decrypts → returns PCM
+## Gap 2 — Seeking hits the wrong player (P0)
 
-6. Decode ALAC/AAC
-   → CoreAudio bridge has ACAppleLosslessDecoderEntry at ordinal 8
-   → Takes: encoded data → PCM audio
-   → BUT: never called
-   → NEED: pass decrypted segment to the ALAC decoder
+`app.js:1205-1218` always invokes `seek_to` with `state.playback.duration`, which belongs to
+the parked local engine. Clicking the progress bar during a stream snaps the bar to 0 % while
+audio keeps playing.
 
-7. Play through rodio
-   → Audio engine already accepts PCM and plays through rodio
-   → WOULD WORK immediately once PCM arrives
-```
+**Fix.** Branch on `state.streamingActive` → `invoke("stream_seek", { position })` and
+re-anchor `streamAnchor`. Requires Gap 1 for a truthful duration.
+**Evidence:** `docs/04-bugs/04-PROGRESS-BAR-SEEK.md`
 
-## Why It's Hard
+## Gap 3 — No transport for the streamed player (P1)
 
-| Challenge | Impact |
-|-----------|--------|
-| FigContentKeyBoss parameter types unknown | We have the function pointer but don't know the exact C struct types |
-| CoreFP ordinal signatures unknown | We know 6 exported addresses but not their calling conventions |
-| Apple's key server requires valid device attestation | Might reject requests from non-Apple processes |
-| API field for full HLS URL needs discovery | The 30s preview URL is in `previews[0].url` but full HLS URL may be elsewhere |
+| Control | Today | Needed |
+|---------|-------|--------|
+| Next | `next_track` → parked local engine | MusicKit `skipToNextItem` / queue |
+| Previous | `prev_track` → parked local engine | MusicKit `skipToPreviousItem` |
+| Shuffle | `set_shuffle` → parked local engine | MusicKit `shuffleMode` |
+| Repeat | `set_repeat_mode` → parked local engine | MusicKit `repeatMode` |
+| Stop | never called | `stream_stop` on the UI |
 
-## What We Know
+**Fix.** Add `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat` commands that
+push jobs through the existing queue mechanism. `PLAYER_BOOTSTRAP.__mkDo` needs matching
+branches. Playback order needs a queue concept: either let MusicKit own the queue
+(`setQueue` with a song list, then skip) or keep one song at a time and compute neighbours in
+Rust.
 
-- The developer token works (scraped from music.apple.com, used for API calls)
-- The user token works (imported from official app's cookies)
-- The DLLs load and function pointers bind
-- The HLS parser works for both master playlists and media segments
-- The audio engine works with local files and could play decrypted streams
+## Gap 4 — "Your Library" is not your Apple library (P1)
 
-## Next Steps (When Ready to Build)
+The sidebar's Library/Albums/Artists views read the **parked local SQLite** database
+(`app.js:660-745`). `get_personal_library` exists and returns the user's iCloud songs but is
+never called.
 
-1. Add `get_stream_url(song_id)` to `api/client.rs` — try different API parameters
-2. Create `streaming::decrypt_pipeline` module that:
-   a. Downloads HLS master playlist
-   b. Selects best variant
-   c. Downloads media playlist
-   d. For each segment: download → pass to FigSampleBufferSetDecryptor → pass to CoreAudio ALAC decoder → feed PCM to rodio
-3. Connect to UI: modify `play_track` for catalog songs to use streaming pipeline instead of local file path
+**Fix.** Repoint those views at `get_personal_library` + `get_cloud_playlists`. Keep the
+parked renderers compiled but unreachable, or gate the nav behind a feature flag until P4.
+
+## Gap 5 — No album detail view (P2)
+
+`get_catalog_album` is implemented; clicking an album card does nothing.
+
+**Fix.** New view: header (artwork, title, artist, year, track count), track list from the
+album payload, click-to-play, "play album" that queues all tracks.
+
+## Gap 6 — Cloud playlists are half-wired (P2)
+
+`get_cloud_playlists` renders names; `get_cloud_playlist_tracks` exists but the "Sync iCloud"
+button only shows counts (`sync_cloud_library` at `lib.rs:791` counts and discards).
+
+**Fix.** Render cloud playlists with artwork and open a track list; make sync either persist
+or disappear.
+
+## Gap 7 — No loading or error surface (P2)
+
+- Clicking a song gives no "buffering" indication; if playback fails you get a silent icon flip.
+- `stream_play` returning `Err` is only logged to the console.
+
+**Fix.** A small state machine in the transport bar: idle → loading → playing → error, driven
+by Gap 1's real state.
+
+## Gap 8 — Nothing survives restart (P3)
+
+Session persists; last track, queue, and volume do not.
+
+**Fix.** Persist a tiny `player_state.json` (last song id, position, volume) next to
+`session.json` and restore on launch.
+
+## Gap 9 — No keyboard or media-key control (P3)
+
+**Fix.** Space to toggle, arrows to seek, and Win32 media keys via a global shortcut plugin
+or a WebView2 key handler.
+
+## Gap 10 — Audio ceiling (won't fix on this architecture)
+
+AAC 256 kbps. Lossless needs either a native CDM integration or a different playback host.
+Out of scope for the MVP; document it in the UI as a known limitation rather than pretending
+otherwise.
+
+---
+
+## Out of scope (deliberately)
+
+Downloads/offline · lyrics · Dolby Atmos · equalizer · Discord presence · tray controls ·
+multi-account · queue drag-and-drop · Last.fm scrobbling.
+
+## Parked, decision later
+
+Local file playback — develop or delete. See `04-PARKED-LOCAL-PLAYBACK.md`. Not a gap.

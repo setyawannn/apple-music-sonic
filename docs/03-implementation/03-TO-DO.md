@@ -1,169 +1,116 @@
-# Apple Music RS — Complete To-Do & Status
+# Apple Music RS — To-Do
 
-## What Works (Testing Passed)
+> Last updated: 2026-11-13
+> **Scope: clone Apple Music only.** Local file playback is parked
+> (`04-PARKED-LOCAL-PLAYBACK.md`) — not on this list, not being deleted.
 
-**All 80 unit & acceptance tests pass** ✅
-- 16 unit tests (locator, coreaudio, coremedia, corefp)
-- 16 library acceptance tests
-- 16 audio acceptance tests
-- 16 API acceptance tests
-- 16 streaming acceptance tests
-- **2 FFI acceptance tests FAIL** (CoreMedia.dll dependency resolution in test context)
-
-## What Already Works in the App
-
-### Local Music Playback
-- ✅ Scan `~/Music` for audio files
-- ✅ Play MP3/FLAC/ALAC/AAC/WAV/OGG via symphonia + rodio
-- ✅ Play/pause/resume/stop/seek/volume
-- ✅ Queue with next/prev/shuffle/repeat (off/one/all)
-- ✅ Album play (queues all tracks)
-- ✅ Auto-advance to next track
-- ✅ Position tracking in playback bar
-
-### Library Management
-- ✅ SQLite database (tracks, albums, artists, playlists)
-- ✅ Metadata extraction (title, artist, album, genre, year, duration)
-- ✅ Album artwork extraction and caching
-- ✅ M3U/PLS playlist import and export
-- ✅ Artist list
-
-### Apple Music Catalog
-- ✅ Search catalog (songs, albums, artists)
-- ✅ Live search suggestions
-- ✅ Album detail view
-- ✅ Charts / Browse
-- ✅ Recommendations
-- ✅ Cloud playlists (iCloud library)
-
-### Apple Music Streaming (via hidden WebView2 player)
-- ✅ Hidden WebView2 loading music.apple.com/id/
-- ✅ Injected JavaScript to control MusicKit player
-- ✅ `stream_play(song_id)` → plays full song via Apple's CDM
-- ✅ `stream_pause` / `stream_resume` / `stream_seek`
-- ✅ Player state loopback via TCP (127.0.0.1:38471)
-- ✅ Frontend `player-state` listener updates playback bar in real-time
-- ✅ Auth sign-in via WebView2
-- ✅ Auto-import session from official app's cookies
-
-### Auth (No $99/year!)
-- ✅ Hardcoded Apple Music dev token (scraped from music.apple.com JS bundle)
-- ✅ Auto-refresh dev token on startup
-- ✅ WebView2 sign-in window
-- ✅ Import session from official app's WebView2 cookies
-- ✅ Session persistence to disk
-
-### DLL Loading
-- ✅ AppLocator finds Apple Music install directory
-- ✅ Stages DLLs from WindowsApps to %LOCALAPPDATA%/bridge
-- ✅ Microsoft DLLs filtered to avoid WebView2 conflicts
-- ✅ CoreAudioToolbox loaded (ALAC/AAC/MP3 decoder ordinals)
-- ✅ CoreMedia loaded (FigContentKeyBoss, FigCPECryptor by name)
-- ✅ CoreFP loaded (6 obfuscated ordinals resolved)
-
-### Diagnostics
-- ✅ `get_native_bridge_status` returns RAM, DLL state, session detection
-- ✅ `run_native_bridge_diagnostics` returns detailed text report
+Each item names the file to touch and the definition of done. Work top to bottom; P0 items
+are prerequisites for testing anything below them.
 
 ---
 
-## What's Broken or Missing
+## P0 — Make playback truthful
 
-### 🔴 Critical Bugs
+### P0.1 Stop waiting on a signal that never arrives
+**File:** `src-tauri/src/lib.rs` (`player_command`)
+- Dispatch the job and return `Ok(())` immediately.
+- Remove the `PLAYER_READY` wait and the 30 s timeout, or keep them as pure observation with
+  no `Err` path.
+- Keep `PLAYER_READY` / `/ready` if useful for logging, but never block on it.
 
-| Bug | Details | Priority |
-|-----|---------|----------|
-| CoreMedia.dll fails to load in tests | Win32 Error 126 (dependency not found). CoreMedia needs CoreFoundation.dll which isn't in the bridge dir. Must copy ALL dependency DLLs. | 🔴 High |
-| stream_stop controller | Backend command exists, frontend never sends it | 🟡 Medium |
-| stream_seek from UI | Backend command exists, frontend never sends it (only local seek) | 🟡 Medium |
+**Done when:** `stream_play` resolves in milliseconds and the optimistic UI state is never
+reset by a timeout.
 
-### 🟡 Features Not Wired to UI
+### P0.2 Give the player a CSP-proof state channel
+**Files:** `lib.rs` (`PLAYER_BOOTSTRAP`, `start_state_listener`), `src/js/app.js`
+- In the bootstrap, write state to `document.title` on transitions and on a 250–500 ms tick:
+  `{playing, position, duration, id, title, artist, artwork}`.
+- In Rust, poll `webview.title()` on a 250 ms task, dedupe by value, emit `player-state`.
+- Frontend listener already exists (`app.js:186-219`) and needs no change if the payload
+  shape is preserved.
+- Keep the TCP listener temporarily for debugging, then delete it and the `/debug` probe loop.
 
-| Backend Command | Frontend? | What's Missing |
-|----------------|-----------|----------------|
-| `add_to_playlist` | ❌ | No UI button to add track to playlist |
-| `remove_from_playlist` | ❌ | No UI button to remove track |
-| `delete_playlist` | ❌ | No UI button to delete playlist |
-| `import_playlist` | ❌ | No file picker for M3U/PLS import |
-| `export_playlist` | ❌ | No UI button for export |
-| `create_playlist` | ✅ | Wire in frontend (create button exists but not functional?) |
-| `get_catalog_album` | ❌ | Clicking album in search results should show detail view |
-| `get_personal_library` | ❌ | Sync user's iCloud library |
-| `get_cloud_playlist_tracks` | ✅ | Wire into cloud playlist view |
-| `set_storefront` | ❌ | Storefront picker (settings) |
-| `sync_cloud_library` | ❌ | Sync button |
-| `play_stream_track` | ✅ | Already wired as fallback |
+**Done when:** the playback bar shows the player's real position and duration, artwork and
+title come from the page, and pausing updates the icon without a click.
 
-### 🟢 Missing UI Polish
+### P0.3 Wire seek to the streaming player
+**File:** `src/js/app.js` (`progressBar` handler)
+- If `state.streamingActive`: `invoke("stream_seek", { position })`, set
+  `streamPosition`, re-anchor `streamAnchor`, update the fill.
+- Otherwise keep the existing `seek_to` path (dormant local engine).
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Playlist panel/edit/create | ❌ | Backend commands exist, no UI |
-| Album detail view (from catalog) | ❌ | Clicking album searches but no dedicated view |
-| Now Playing full-screen | ❌ | No "Now Playing" view |
-| Lyrics display | ❌ | TTML parser not built |
-| Keyboard shortcuts | ❌ | Space for play/pause, arrows for seek |
-| Media keys (keyboard) | ❌ | Windows media keys not handled |
-| Settings page | ❌ | No settings modal |
-| Queue panel (sidebar) | ❌ | No up-next drawer |
-| Download/offline | ❌ | Not implemented |
-| Drag-to-reorder queue | ❌ | Not implemented |
+**Done when:** clicking the bar mid-stream jumps the audio and the bar stays where you put it.
 
-### 🔵 Partially Working
-
-| Feature | Status | Issue |
-|---------|--------|-------|
-| CoreMedia DLL in tests | ❌ | Deps not resolved in bridge dir |
-| Add to playlist from search | ❌ | Backend exists, no UI |
-| Stop playback command | ⚠️ | `stop_playback` on local files, `stream_stop` on streaming — frontend only does stream_pause |
-| Volume slider interaction | ⚠️ | Volume bar click works, but no visual volume level indicator in UI |
+### P0.4 Remove the dead-player probes
+**File:** `lib.rs`
+- Delete the 5-second `probe_*` loop and the `/debug` handler once P0.2 lands.
 
 ---
 
-## To-Do List (Priority Order)
+## P1 — Real transport
 
-### Now — Fix the 2 Failing Tests
-- [ ] Copy ALL dependency DLLs (CoreFoundation.dll, CFNetwork.dll, etc.) to bridge directory, not just the Apple-named ones
+### P1.1 Queue model
+Decide and implement one of:
+- **A.** MusicKit owns the queue: `setQueue({ songs: [...] })` for album/playlist playback,
+  then `skipToNextItem` / `skipToPreviousItem`.
+- **B.** One song at a time, with Rust computing neighbours from the current view.
 
-### Now — Wire Missing UI Features
-- [ ] `stream_seek`: Wire the progress bar click to call `stream_seek` when streaming is active
-- [ ] `stream_stop`: Wire a stop button that calls the backend command
+A is less code and matches Apple's semantics; recommend A.
 
-### Next — Wire Backend Commands to UI
-- [ ] Create Playlist: frontend button already exists, needs dialog + invoke
-- [ ] Add to Playlist: right-click or + button on tracks
-- [ ] Import/Export Playlist: file picker dialog
-- [ ] Album detail from search: clicking album in search results opens dedicated view
-- [ ] Cloud library sync: button that calls `sync_cloud_library`
+### P1.2 New commands + bootstrap branches
+`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, plus matching
+`__mkDo` cases (`skipToNextItem`, `skipToPreviousItem`, `m.shuffleMode`, `m.repeatMode`).
 
-### Next — UI Polish
-- [ ] Settings panel (storefront, language, theme)
-- [ ] Keyboard shortcuts (Space, arrows, Ctrl+F)
-- [ ] Windows media key support
-- [ ] Queue drawer panel
-- [ ] Now Playing full-screen view
-- [ ] Lyrics view
+**Done when:** next/prev/shuffle/repeat work while streaming and the shuffle/repeat buttons
+reflect the player's state.
 
-### Later — Feature Expansion
-- [ ] Dolby Atmos support
-- [ ] Equalizer
-- [ ] Last.fm scrobbling
-- [ ] Discord rich presence
-- [ ] System tray with playback controls
-- [ ] Automatic library watch (file system watcher)
+### P1.3 Stop
+Wire a stop control to `stream_stop`, then clear streaming state in the frontend.
 
 ---
 
-## Summary
+## P2 — Surface the Apple library
 
-```
-Status:      70% Complete
-Backend:     47 commands, 5,655 lines Rust
-Frontend:    1,349 lines JS, 1,011 lines CSS 
-Tests:       80 pass, 2 fail (CoreMedia deps)
-Binary:      20 MB release build
-Memory:      ~80 MB target (not measured)
-Streaming:   ✅ Works via hidden MusicKit WebView2
-Local Play:  ✅ Works via symphonia + rodio
-Auth:        ✅ $0 (scraped web token + cookie import)
-```
+### P2.1 Library tab = iCloud library
+Replace the local-DB renderers with `get_personal_library` (songs) and derive albums/artists
+client-side or with a small backend grouping. Do not delete the parked renderers.
+
+### P2.2 Album detail view
+New view driven by `get_catalog_album`: artwork, metadata, track list, play-all, per-track
+play. Clicking an album card anywhere opens it.
+
+### P2.3 Cloud playlists
+`get_cloud_playlists` with artwork → open → `get_cloud_playlist_tracks` → play. Decide the
+fate of `sync_cloud_library` (persist or remove).
+
+### P2.4 Welcome/first-run
+Replace "Scan My Music" with the sign-in path. Keep the scanner reachable only from the
+parked code path, not the main flow.
+
+---
+
+## P3 — Polish
+
+- Transport state machine: idle / loading / playing / paused / error, with a visible
+  "buffering" state (depends on P0.2).
+- Non-256 kbps / unavailable track errors surfaced in the UI, not just `console.error`.
+- Restore last track, position, and volume on launch.
+- Space to play/pause, arrows to seek, Windows media keys.
+- Now Playing view and a queue drawer.
+
+---
+
+## P4 — Decide the parked feature
+
+Only after P0–P3: develop local file playback, or delete it. Both paths are written out in
+`04-PARKED-LOCAL-PLAYBACK.md`.
+
+---
+
+## Guardrails while working
+
+- Never route new UI into `scan_library` / `play_track` / `seek_to`.
+- Never extend `drm/**`.
+- Run `cargo check --no-default-features` after every `lib.rs` change.
+- One player, one state source. If a change needs a second source of truth, stop and fix the
+  first one.

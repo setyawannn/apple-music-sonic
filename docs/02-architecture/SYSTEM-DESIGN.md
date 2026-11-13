@@ -17,7 +17,7 @@
                            │  invoke() / listen()
 ┌──────────────────────────▼──────────────────────────────────────────┐
 │ Tauri command layer — src-tauri/src/lib.rs                            │
-│   47 commands, window lifecycle, event emit                          │
+│   52 commands, window lifecycle, event emit                          │
 └──────┬───────────────────┬──────────────────────┬───────────────────┘
        │                   │                      │
 ┌──────▼──────┐   ┌────────▼─────────┐   ┌────────▼──────────────────┐
@@ -50,10 +50,11 @@ diagnostics commands.
 state = {
   auth: { isAuthenticated, storefront, userTokenMasked },
   tracks, albums, artists, playlists, cloudPlaylists,   // library views
+  cloudTracks,                                          // iCloud songs (Library/Albums/Artists)
   playback: { isPlaying, currentTrackId, duration, position, volume,
               isShuffle, repeatMode },                   // PARKED local player
-  streamingActive, streamIsPlaying, streamPosition,
-  streamDuration, streamAnchor       // hidden player (re-anchored from real reports)
+  streamingActive, streamIsPlaying, streamPosition, streamDuration, streamAnchor,
+  streamShuffle, streamRepeat, streamVolume, streamQueueLength  // hidden player
 }
 ```
 
@@ -61,28 +62,34 @@ state = {
 and returns; otherwise it polls `get_playback_status` from the parked local engine. The
 streaming branch's numbers now come from the `player-state` event (cookie channel), and
 `streamAnchor` is re-set on every report, so the local clock only smooths gaps between them.
-The local fork remains a wart until P2 stops routing UI into the parked engine.
+Shuffle, repeat, volume and queue length come from the same event, so the transport bar shows
+MusicKit's own state. The local fork remains a wart until the parked engine is finally decided.
 
 ## Data flow (current)
 
 | User action | Path |
 |-------------|------|
-| Click catalog song | optimistic state → `invoke("stream_play")` → `player_command` → JS queue → MusicKit |
+| Click catalog song | optimistic state → `invoke("stream_play", { songId, queue })` → `player_command` → JS queue → `setQueue({ songs, startWith })` |
 | Play/pause reflect | page `publish()` → `mk_state` cookie → `start_state_poller` → `emit("player-state")` |
 | Click play/pause | `stream_pause` / `stream_resume` (or local commands when the local engine owns playback) |
+| Next / previous | `stream_next` / `stream_previous` → `skipToNextItem` / restart-or-`skipToPreviousItem` |
+| Shuffle / repeat | `stream_shuffle` / `stream_repeat` → `shuffleMode` / `repeatMode`; reported back in `player-state` |
+| Volume | `stream_volume` → `m.volume` |
 | Seek | progress bar → `stream_seek` → `seekToTime()` |
+| Album detail | `get_catalog_album` → header + Play/Shuffle queue |
 | Search | `invoke("search_catalog")` → `amp-api.music.apple.com` |
 | Load Listen Now | `get_recommendations` |
 | Load Browse | `get_charts` |
-| Playlists | `get_cloud_playlists` (+ parked `get_playlists`) |
+| Library / Albums / Artists | `get_personal_library` → grouped client-side |
+| Playlists | `get_cloud_playlists` → `get_cloud_playlist_tracks` (+ parked local playlists) |
 | Sign in | WebView2 window → cookie poll → validate → persist → emit `auth-success` |
 | Import session | cookie SQLite → validate → persist |
 
-### Not wired yet (backend exists)
+### Not wired yet
 
-`get_personal_library` · `get_catalog_album` · `sync_cloud_library` — see
-`docs/03-implementation/02-WHATS-MISSING.md`. Transport (next/prev/shuffle/repeat) is the P1
-work and does not have backend commands yet either.
+Radio stations (needs Apple's stations API) · `sync_cloud_library` (registered, no UI) ·
+lyrics / queue drawer / downloads (out of scope). See
+`docs/03-implementation/02-WHATS-MISSING.md`.
 
 ## Concurrency model
 

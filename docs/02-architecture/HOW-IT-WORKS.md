@@ -38,18 +38,21 @@ playing; we drive it.
 
 ### 1. A song is clicked
 
-`src/js/app.js` reads `data-catalog-id` off the track row and:
+`src/js/app.js` reads `data-catalog-id` off the track row, collects the ids of every row in
+the same list, and:
 
 ```js
 state.streamingActive  = true;      // optimistic UI
 state.streamIsPlaying  = true;
 state.streamPosition   = 0;
 state.streamAnchor     = Date.now();
-invoke("stream_play", { songId: catalogId });
+invoke("stream_play", { songId: catalogId, queue: idsOfVisibleList, shuffle: null });
 ```
 
-Title, artist, and artwork are written to the playback bar **before** the command is sent,
-so the UI never sits empty while the player wakes up.
+The queue is the list the user is looking at (album, search result, playlist, library
+songs), so MusicKit's next/previous/shuffle/repeat move through exactly that list. Title,
+artist, and artwork are written to the playback bar **before** the command is sent, so the
+UI never sits empty while the player wakes up.
 
 ### 2. Rust hands the command to the hidden page
 
@@ -76,11 +79,29 @@ window.__mkDo     = async (cmd, arg, nonce) => {
   if (nonce && window.__mkNonce === nonce) return;   // same command re-delivered → ignore
   window.__mkNonce = nonce;
   const m = await window.__mkReady;                  // parks until MusicKit is live
-  if (cmd === "play")   { await m.setQueue({ song: String(arg) }); return m.play(); }
-  if (cmd === "pause")  return m.pause();
-  if (cmd === "resume") return m.play();
-  if (cmd === "stop")   return m.stop();
-  if (cmd === "seek")   return m.seekToTime(Number(arg));
+  if (cmd === "play") {
+    const spec = JSON.parse(String(arg));             // { startWith, songs, shuffle }
+    if (spec.songs.length > 1) {
+      await m.setQueue({ songs: spec.songs, startWith: spec.startWith });
+    } else {
+      await m.setQueue({ song: String(spec.startWith) });
+    }
+    if (spec.shuffle === true)  m.shuffleMode = 1;    // album Shuffle / Play
+    if (spec.shuffle === false) m.shuffleMode = 0;
+    return m.play();
+  }
+  if (cmd === "pause")    return m.pause();
+  if (cmd === "resume")   return m.play();
+  if (cmd === "stop")     return m.stop();
+  if (cmd === "seek")     return m.seekToTime(Number(arg));
+  if (cmd === "next")     return m.skipToNextItem();
+  if (cmd === "previous") {
+    if (m.currentPlaybackTime > 3) return m.seekToTime(0);  // Apple's own rule
+    return m.skipToPreviousItem();
+  }
+  if (cmd === "shuffle") { m.shuffleMode = Number(arg) ? 1 : 0; return; }
+  if (cmd === "repeat")  { m.repeatMode  = Number(arg) || 0; return; }
+  if (cmd === "volume")  { m.volume = Math.max(0, Math.min(1, Number(arg))); return; }
 };
 window.__mkDrain = () => window.__mkQueue.splice(0).forEach(job => run(job));
 ```
@@ -145,9 +166,15 @@ document.cookie = 'mk_state=' + encodeURIComponent(json) +
 ```
 
 ```json
-{"isPlaying":true,"position":17,"duration":155,"id":"6812102720",
- "title":"hang up","artist":"Kendis","artwork":"https://is1-ssl.mzstatic.com/..."}
+{"isPlaying":true,"position":17,"duration":207,"id":"1696166346",
+ "title":"XXL","artist":"LANY","album":"a beautiful blur",
+ "artwork":"https://is1-ssl.mzstatic.com/...",
+ "shuffle":0,"repeat":0,"volume":0.52,"queueLength":10}
 ```
+
+The transport fields are why the shuffle/repeat buttons and the volume bar show the player's
+real state rather than a local guess, and `queueLength` is how we know the click actually
+created a multi-song queue.
 
 `start_state_poller()` runs a 250 ms task in Rust that:
 
@@ -188,11 +215,11 @@ player after a successful sign-in.
 
 ---
 
-## Command surface (47 commands)
+## Command surface (52 commands)
 
 | Group | Count | Commands |
 |-------|-------|----------|
-| Streaming player | 5 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek` |
+| Streaming player | 10 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek`, `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume` |
 | Apple Music API + auth | 15 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `play_stream_track` |
 | Native bridge + diagnostics | 3 | `get_native_bridge_status`, `import_local_apple_session`, `run_native_bridge_diagnostics` |
 | **Parked** local playback | 12 | `play_track`, `play_album`, `pause_playback`, `resume_playback`, `stop_playback`, `seek_to`, `set_volume`, `get_playback_status`, `next_track`, `prev_track`, `set_repeat_mode`, `set_shuffle` |
@@ -218,7 +245,7 @@ not part of the product.
 ## Known limits (not bugs, just ceilings)
 
 - AAC 256 kbps maximum; no lossless, no Atmos.
-- Apple UI features not implemented: lyrics, queue drawer, downloads, radio.
+- Apple UI features not implemented: lyrics, queue drawer, downloads, radio stations.
 - Single window, single account, Windows only.
 
 ---
@@ -227,13 +254,13 @@ not part of the product.
 
 | Path | Lines | Role |
 |------|-------|------|
-| `src-tauri/src/lib.rs` | 1,095 | 47 commands, `PLAYER_BOOTSTRAP`, `ensure_player`, `player_command`, `start_state_poller`, auth windows, lifecycle |
+| `src-tauri/src/lib.rs` | 1,192 | 52 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish), `ensure_player`, `player_command`, `start_state_poller`, auth windows, lifecycle |
 | `src-tauri/src/api/client.rs` | 474 | REST: search, suggestions, album, charts, library, playlists |
 | `src-tauri/src/api/local_session.rs` | 397 | WebView2 cookie import |
 | `src-tauri/src/api/auth.rs` | 166 | Developer token, session persistence, storefront |
 | `src-tauri/src/api/models.rs` | 101 | Store models |
-| `src/js/app.js` | 1,369 | All UI logic and command calls |
-| `src/styles/app.css` | 1,011 | Apple-style dark theme |
+| `src/js/app.js` | 1,864 | All UI logic and command calls (iCloud library, album detail, queue-aware playback) |
+| `src/styles/app.css` | 1,104 | Apple-style dark theme |
 | `index.html` | 176 | Shell: sidebar, main view, playback bar |
 | `src-tauri/src/audio/**`, `library/**` | 2,077 | **PARKED** local engine + library |
 | `src-tauri/src/drm/**` | 1,538 | **ABANDONED** native decrypt attempt |

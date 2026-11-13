@@ -55,15 +55,21 @@ needed.
 3. Click a song → full song streams through the hidden player.
 4. The playback bar shows the player's own position and duration; play/pause, mute, and
    seeking all work while streaming.
+5. **Next / previous / shuffle / repeat / volume** act on the list you clicked: that list
+   becomes MusicKit's queue, and the transport bar mirrors the player's own state.
+6. **Library / Albums / Artists** read your iCloud library; album cards open a detail view
+   with Play and Shuffle; cloud playlists open and play.
 
 ### What you can expect to be rough
 
-- **Next / previous / shuffle / repeat do nothing while streaming.** They call the parked
-  local engine. This is the P1 work item.
-- **The playback bar lags reality by up to ~500 ms.** The player publishes state twice a
-  second plus on events; the frontend smooths between reports.
-- **Album cards and the Library/Playlists tabs read the parked local database**, not your
-  iCloud library. Backend commands exist; the UI is P2 work.
+- **No loading or error surface.** A failing track flips the icon silently; errors only reach
+  the console. (P3)
+- **Nothing survives a restart** except the session — last track, queue and volume are not
+  restored. (P3)
+- **No keyboard or media-key control.**
+- **Radio** is an honest placeholder: live stations need Apple's stations API.
+- **The playback bar lags reality by up to ~250 ms.** The player publishes state on events
+  and on a timer; the frontend smooths between reports.
 - **Ceiling is AAC 256 kbps.** Lossless is not reachable through WebView2.
 
 All of the above are tracked in `docs/03-implementation/02-WHATS-MISSING.md`.

@@ -38,49 +38,55 @@ and P2 build on.
 
 ---
 
-## P1 — Real transport (next)
+## P1 — Real transport — ✅ DONE (2026-11-13)
 
-### P1.1 Queue model
-Decide and implement one of:
-- **A.** MusicKit owns the queue: `setQueue({ songs: [...] })` for album/playlist playback,
-  then `skipToNextItem` / `skipToPreviousItem`.
-- **B.** One song at a time, with Rust computing neighbours from the current view.
+### P1.1 Queue model — ✅ A
+MusicKit owns the queue. `stream_play` takes the ids of the visible list
+(`queue: Vec<String>`) plus `startWith`; the bootstrap calls
+`setQueue({ songs, startWith })`. Verified live: `queueLength` reports 10 for an album
+queue and next/previous now have somewhere to go.
 
-A is less code and matches Apple's semantics; recommend A. It also gives next/prev something
-real to skip within, which a single-song queue does not.
-
-### P1.2 New commands + bootstrap branches
-`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, plus matching `__mkDo`
-cases (`skipToNextItem`, `skipToPreviousItem`, `m.shuffleMode`, `m.repeatMode`).
-
-Reflect the result: `publish()` should also report `shuffleMode` and `repeatMode` so the
-buttons show the player's state instead of a local guess.
-
-**Done when:** next/prev/shuffle/repeat work while streaming and the buttons stay in sync.
+### P1.2 New commands + bootstrap branches — ✅
+`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume`
+(52 commands total). `__mkDo` branches: `skipToNextItem`, `skipToPreviousItem`
+(restart-if->3s, Apple's own rule), `m.shuffleMode`, `m.repeatMode`, `m.volume`.
+`publish()` now also reports `album`, `shuffle`, `repeat`, `volume`, `queueLength`, so
+the buttons repaint from the player's state instead of a local guess.
+Verified live: `cmd=volume` moves the player's own `volume` value and the bar follows.
 
 ### P1.3 Stop
-Wire a stop control to `stream_stop`, then clear streaming state in the frontend.
+`stream_stop` exists and reaches `m.stop()`. There is no stop control in the UI because
+Apple Music has none either (transport is play/pause + next/prev).
 
 ---
 
-## P2 — Surface the Apple library
+## P2 — Surface the Apple library — ✅ DONE (2026-11-13)
 
-### P2.1 Library tab = iCloud library
-Replace the local-DB renderers with `get_personal_library` (songs) and derive albums/artists
-client-side or with a small backend grouping. Do not delete the parked renderers.
+### P2.1 Library tab = iCloud library — ✅
+`renderLibrary` / `renderAlbums` / `renderArtists` load `get_personal_library` and derive
+albums/artists client-side (`deriveLibraryAlbums`, `deriveLibraryArtists`). The Library
+badge shows the iCloud song count. The scanner and local renderers remain parked in the
+codebase and are no longer reachable from the main views.
 
-### P2.2 Album detail view
-New view driven by `get_catalog_album`: artwork, metadata, track list, play-all, per-track
-play. Clicking an album card anywhere opens it. Play-all is the natural first consumer of the
-P1.1 queue.
+### P2.2 Album detail view — ✅
+`showAlbumDetail` → `get_catalog_album` → header (artwork, year, song count, total time)
+plus Play and Shuffle pills and a full track list. Any catalog album card opens it;
+`Play` builds a MusicKit queue, `Shuffle` does the same with shuffle mode on. iCloud
+album cards open `showLibraryAlbumDetail`, artist cards open `showArtistDetail`.
 
-### P2.3 Cloud playlists
-`get_cloud_playlists` with artwork → open → `get_cloud_playlist_tracks` → play. Decide the
-fate of `sync_cloud_library` (persist or remove).
+### P2.3 Cloud playlists — ✅
+`get_cloud_playlists` cards open `showCloudPlaylistDetail` →
+`get_cloud_playlist_tracks`, and every row plays through the queue path. Local playlist
+cards still open the parked local detail view; that route is not promoted in the UI.
+`sync_cloud_library` is still registered but unused by the UI.
 
-### P2.4 Welcome/first-run
-Replace "Scan My Music" with the sign-in path. Keep the scanner reachable only from the
-parked code path, not the main flow.
+### P2.4 Welcome/first-run — ✅
+`renderWelcome` is a sign-in CTA when signed out and a "Go to Listen Now" shortcut when
+signed in. The scanner is no longer offered.
+
+### P2.5 Browse + Radio — ✅ / honest gap
+`renderBrowse` shows Top Albums and Top Songs from `get_charts`. Radio needs Apple's
+stations API, which is not wired up; `renderRadio` says so instead of showing a fake page.
 
 ---
 
@@ -92,6 +98,9 @@ parked code path, not the main flow.
 - Restore last track, position, and volume on launch.
 - Space to play/pause, arrows to seek, Windows media keys.
 - Now Playing view and a queue drawer.
+- Radio: Apple stations API.
+- Library album grouping currently keys on `artist + album name` because the library song
+  model carries no collection id; add one if Apple returns it for library songs.
 
 ---
 

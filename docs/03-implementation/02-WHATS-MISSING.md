@@ -1,56 +1,16 @@
 # Apple Music RS — What's Missing (MVP gaps)
 
-> Last updated: 2026-11-13 (after P0 shipped)
+> Last updated: 2026-11-13 (after P1 + P2 shipped)
 > Scope: only what blocks "clone Apple Music". Local file playback is parked, not listed.
 
-**P0 is done** — playback state is truthful, seek works, and `stream_play` no longer hangs.
-Details: `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md` and `04-PROGRESS-BAR-SEEK.md`.
+**P0, P1 and P2 are done** — playback state is truthful, the MusicKit queue drives
+next/previous/shuffle/repeat/volume, the library is the iCloud library, and album detail and
+cloud playlists are wired. Details: `03-TO-DO.md`, `01-WHATS-DONE.md`, and
+`docs/04-bugs/`.
 
 ---
 
-## Gap 1 — No transport for the streamed player (P1, next)
-
-| Control | Today | Needed |
-|---------|-------|--------|
-| Next | `next_track` → parked local engine | MusicKit `skipToNextItem` / queue |
-| Previous | `prev_track` → parked local engine | MusicKit `skipToPreviousItem` |
-| Shuffle | `set_shuffle` → parked local engine | MusicKit `shuffleMode` |
-| Repeat | `set_repeat_mode` → parked local engine | MusicKit `repeatMode` |
-| Stop | `stream_stop` exists, never called from the UI | wire the control |
-
-**Fix.** Add `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat` commands that
-push jobs through the existing queue mechanism, plus matching `PLAYER_BOOTSTRAP.__mkDo`
-branches. Playback order needs a queue concept: let MusicKit own it
-(`setQueue({ songs: [...] })` then skip) rather than keeping one song at a time — a
-single-song queue has nothing to skip to. `publish()` should also report `shuffleMode` and
-`repeatMode` so the buttons reflect the player instead of a local guess.
-
-## Gap 2 — "Your Library" is not your Apple library (P1)
-
-The sidebar's Library/Albums/Artists views read the **parked local SQLite** database
-(`app.js:660-745`). `get_personal_library` exists and returns the user's iCloud songs but is
-never called.
-
-**Fix.** Repoint those views at `get_personal_library` + `get_cloud_playlists`. Keep the
-parked renderers compiled but unreachable, or gate the nav behind a feature flag until P4.
-
-## Gap 3 — No album detail view (P2)
-
-`get_catalog_album` is implemented; clicking an album card does nothing.
-
-**Fix.** New view: header (artwork, title, artist, year, track count), track list from the
-album payload, click-to-play, "play album" that queues all tracks (first consumer of the
-P1 queue).
-
-## Gap 4 — Cloud playlists are half-wired (P2)
-
-`get_cloud_playlists` renders names; `get_cloud_playlist_tracks` exists but the "Sync iCloud"
-button only shows counts (`sync_cloud_library` counts and discards).
-
-**Fix.** Render cloud playlists with artwork and open a track list; make sync either persist
-or disappear.
-
-## Gap 5 — No loading or error surface (P2)
+## Gap 1 — No loading or error surface (P3)
 
 - Clicking a song gives no "buffering" indication; if playback fails you get a silent icon flip.
 - Playback errors are only logged to the console.
@@ -58,19 +18,35 @@ or disappear.
 **Fix.** A state machine in the transport bar: idle → loading → playing → error. Now
 tractable, because real state arrives.
 
-## Gap 6 — Nothing survives restart (P3)
+## Gap 2 — Nothing survives restart (P3)
 
 Session persists; last track, queue, and volume do not.
 
 **Fix.** Persist a tiny `player_state.json` (last song id, position, volume) next to
 `session.json` and restore on launch.
 
-## Gap 7 — No keyboard or media-key control (P3)
+## Gap 3 — No keyboard or media-key control (P3)
 
 **Fix.** Space to toggle, arrows to seek, and Win32 media keys via a global shortcut plugin
 or a WebView2 key handler.
 
-## Gap 8 — Audio ceiling (won't fix on this architecture)
+## Gap 4 — Radio has no backend (P3)
+
+`renderRadio` is an honest placeholder. Live stations need Apple's stations API
+(`/v1/catalog/{storefront}/stations` plus station playback params), which is not implemented.
+
+**Fix.** Add a `get_stations` command and queue a station id through `stream_play`, or keep the
+placeholder explicit.
+
+## Gap 5 — Library album grouping is name-based
+
+`deriveLibraryAlbums` keys on `artist + album name` because `StoreSong` carries no collection
+id. Two same-named albums by one artist would merge.
+
+**Fix.** Extend the library song parse to keep the collection id/name from Apple's response
+and group on that.
+
+## Gap 6 — Audio ceiling (won't fix on this architecture)
 
 AAC 256 kbps. Lossless needs either a native CDM integration or a different playback host.
 Out of scope for the MVP; document it in the UI as a known limitation rather than pretending
@@ -85,6 +61,11 @@ otherwise.
 | State channel | CSP killed loopback `fetch`; UI ran on a local clock; every command hung 30 s | Cookie channel `mk_state` → `start_state_poller` → `player-state`; commands return immediately |
 | Seek | Progress bar drove the parked local engine and snapped to 0 % | Branches to `stream_seek`, re-anchors the smoothing clock |
 | Sign-in vs player profile | Sign-in wiped the profile under a live player | Player closed first, re-warmed after success |
+| Transport (P1) | next/prev/shuffle/repeat drove only the parked local engine | `stream_next/previous/shuffle/repeat/volume` → MusicKit; queue is the clicked list; state reported back |
+| iCloud library (P2) | Library/Albums/Artists read the parked SQLite DB | `get_personal_library` → grouped client-side; badge shows iCloud song count |
+| Album detail (P2) | Clicking an album card did nothing | `get_catalog_album` → header + Play/Shuffle queue + track list; iCloud albums get a derived detail view |
+| Cloud playlists (P2) | Names only; tracks unreachable | Artwork cards open the track list; rows play through the queue |
+| Welcome screen (P2) | "Scan My Music" local-scanner CTA | Sign-in CTA / Go to Listen Now |
 
 ## Out of scope (deliberately)
 

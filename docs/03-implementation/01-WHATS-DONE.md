@@ -1,6 +1,6 @@
 # Apple Music RS — What's Done
 
-> Last updated: 2026-11-13 (after P0 shipped)
+> Last updated: 2026-11-13 (after P1 + P2 shipped)
 > Status claims here are verified against the code or a recorded run. Optimistic claims from
 > earlier versions of this document were removed.
 
@@ -38,11 +38,13 @@ Verified end to end: `/v1/me/library/songs` returned 200 with a live session.
 | Play / pause / resume / stop | ✅ | `stream_*` commands |
 | Truthful state feedback | ✅ | `mk_state` cookie → `start_state_poller` → `player-state`; real position, duration, title, artist, artwork verified in `dev-run.log` |
 | Seek | ✅ | progress bar branches to `stream_seek` while streaming |
-| Next / previous | ❌ | no MusicKit queue command exists yet (P1) |
-| Shuffle / repeat | ❌ | backend commands drive only the parked local engine (P1) |
+| Next / previous | ✅ | MusicKit queue: `stream_next` → `skipToNextItem`; `stream_previous` restarts the song if >3 s in, else `skipToPreviousItem` |
+| Shuffle / repeat | ✅ | `stream_shuffle` / `stream_repeat` set `shuffleMode` / `repeatMode`; `player-state` reports them back so the buttons stay truthful |
+| Volume | ✅ | `stream_volume` sets `m.volume`; reported back and mirrored in the volume bar (verified live: `cmd=volume`, value changed) |
+| Queue | ✅ | the clicked list's ids ride with `stream_play`; `setQueue({ songs, startWith })`. Verified live: `queueLength: 10` |
 | Audio quality | ⚠️ | AAC 256 kbps ceiling (no ALAC decoder in WebView2, EME output not readable) |
 
-## 3. Apple Music catalog API — ✅ backend / ⚠️ UI
+## 3. Apple Music catalog API — ✅
 
 Backend methods in `api/client.rs` are implemented and exercised:
 
@@ -50,13 +52,13 @@ Backend methods in `api/client.rs` are implemented and exercised:
 |------------|---------|-------------|
 | Catalog search | `search_catalog` | ✅ |
 | Live typeahead | `get_search_suggestions` | ✅ |
-| Album detail + tracklist | `get_catalog_album` | ❌ no album view |
-| Charts | `get_charts` | ✅ |
+| Album detail + tracklist | `get_catalog_album` | ✅ album detail view (Play + Shuffle queue) |
+| Charts | `get_charts` | ✅ Listen Now fallback + Browse |
 | Recommendations | `get_recommendations` | ✅ (Listen Now) |
-| Personal iCloud songs | `get_personal_library` | ❌ never called |
-| Cloud playlists | `get_cloud_playlists` | ✅ partial |
-| Cloud playlist tracks | `get_cloud_playlist_tracks` | ✅ partial |
-| Library sync | `sync_cloud_library` | ❌ never called; also only counts, does not persist |
+| Personal iCloud songs | `get_personal_library` | ✅ Library / Albums / Artists, preloaded at sign-in |
+| Cloud playlists | `get_cloud_playlists` | ✅ cards + sidebar |
+| Cloud playlist tracks | `get_cloud_playlist_tracks` | ✅ opens and plays through the queue path |
+| Library sync | `sync_cloud_library` | ❌ registered, no UI; counts only, does not persist |
 
 ## 4. UI shell — ✅
 
@@ -65,7 +67,11 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Apple-style dark theme, sidebar, album grid, persistent transport | ✅ |
 | Playback bar with artwork, title, artist, progress, volume | ✅ |
 | Optimistic click feedback | ✅ |
-| Real progress and play/pause sync | ✅ |
+| Real progress, play/pause, next/prev, shuffle, repeat, volume sync | ✅ |
+| Library / Albums / Artists from the iCloud library | ✅ |
+| Album detail (catalog) and derived iCloud album detail | ✅ |
+| Browse (Top Albums / Top Songs) | ✅ |
+| Radio | ❌ honest placeholder (needs Apple stations API) |
 | Now Playing full-screen view | ❌ |
 | Queue drawer | ❌ |
 | Lyrics | ❌ |
@@ -114,11 +120,13 @@ command queue, the cookie poller, or the frontend. Verification for those is a d
 | Auth ($0) | ✅ done |
 | Full-song streaming | ✅ works |
 | Playback state truth | ✅ done (P0) |
-| Transport (next/prev/shuffle/repeat) | ❌ P1 |
+| Transport (next/prev/shuffle/repeat/volume) | ✅ done (P1, queue model A) |
 | Catalog browse/search/charts/recs | ✅ done |
-| Album detail, iCloud library | ⚠️ backend done, UI missing |
+| Album detail, iCloud library, cloud playlists | ✅ done (P2) |
+| Browse / Radio | ✅ Browse · ❌ Radio (stations API) |
 | Local file playback | ⏸ parked |
 | Native decryption | ⚰ abandoned |
 
-The app is a working Apple Music player whose interface now matches what the player is doing.
-Next milestone: real transport (P1).
+The app is a working Apple Music player whose interface matches what the player is doing:
+the queue is the list you clicked, and the transport bar reports MusicKit's own state.
+Next milestone: P3 polish (loading/error states, resume on launch, media keys, queue drawer).

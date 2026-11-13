@@ -26,9 +26,9 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 
 ## Quick facts
 
-- **23 Rust files, 5,869 lines**, **47 Tauri commands** registered in `generate_handler!`
+- **23 Rust files, ~5,200 lines**, **52 Tauri commands** registered in `generate_handler!`
 - **~20 MB** release binary; RAM target **~80 MB** (not yet measured — treat old claims as aspirational)
-- Frontend: `index.html`, `src/js/app.js` (1,369 lines), `src/styles/app.css` (1,011 lines)
+- Frontend: `index.html`, `src/js/app.js` (1,864 lines), `src/styles/app.css` (1,104 lines)
 - Streaming works: hidden MusicKit WebView2 + Windows PlayReady CDM
 - Playback state works: page writes a cookie, Rust polls the cookie jar, emits `player-state`
 - Auth works: developer token scraped from Apple's web bundle + `media-user-token` cookie
@@ -37,16 +37,18 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 
 ```
 click a catalog song
-  → invoke("stream_play", { songId })
+  → invoke("stream_play", { songId, queue: [ids of the visible list], shuffle })
   → Rust evals a job into the hidden "player" webview (music.apple.com/id/) and returns Ok
-  → page's MusicKit instance: setQueue({ song }) then play()
+  → page's MusicKit instance: setQueue({ songs, startWith }) then play()
   → Windows PlayReady CDM decrypts FairPlay
   → audio plays
+  → next/previous/shuffle/repeat are MusicKit's own (skipToNextItem, shuffleMode, …)
 
 player state (twice a second, plus on every player event)
   → page: document.cookie = "mk_state=" + encodeURIComponent(json)
   → Rust: start_state_poller reads window.cookies() every 250 ms
-  → emit("player-state", json) → app.js updates icon, position, title, artwork
+  → emit("player-state", json) → app.js updates icon, position, title, artwork,
+    shuffle/repeat/volume, queue length
 ```
 
 - Hidden window label: `player`, created by `ensure_player()` in `src-tauri/src/lib.rs`,
@@ -104,7 +106,7 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 
 | Path | Purpose |
 |------|---------|
-| `src-tauri/src/lib.rs` (1,095) | 47 commands, hidden player + bootstrap script, cookie state poller, auth windows, lifecycle |
+| `src-tauri/src/lib.rs` (1,192) | 52 commands, hidden player + bootstrap script (queue, transport, publish), cookie state poller, auth windows, lifecycle |
 | `src-tauri/src/api/auth.rs` (166) | Developer token, session persistence, storefront |
 | `src-tauri/src/api/client.rs` (474) | REST client: search, album, charts, library, playlists |
 | `src-tauri/src/api/local_session.rs` (397) | Imports session from WebView2 cookie SQLite |
@@ -113,7 +115,7 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 | `src-tauri/src/library/**` (1,006) | **PARKED** local library + SQLite |
 | `src-tauri/src/drm/**` (1,538) | **ABANDONED** native decrypt attempt (diagnostics only) |
 | `src-tauri/capabilities/player.json` | Remote capability for the `player` webview |
-| `src/js/app.js` (1,369) | All UI logic |
+| `src/js/app.js` (1,864) | All UI logic (iCloud library, album detail, queue-aware playback, transport) |
 
 ## Docs map
 

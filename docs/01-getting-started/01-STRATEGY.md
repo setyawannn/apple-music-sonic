@@ -1,7 +1,8 @@
 # Apple Music RS — Strategy
 
 > Last updated: 2026-11-13
-> Status: streaming MVP works; transport and library surfacing are the remaining work.
+> Status: MVP surface works — sign in, browse, search, album detail, iCloud library, cloud
+> playlists, and full-song playback with a real transport. Radio stations and polish remain.
 
 ---
 
@@ -67,10 +68,12 @@ decoder, and EME output cannot be read as PCM). Lossless is out of reach on this
 | Search + typeahead | ✅ works |
 | Seek while streaming | ✅ works |
 | Truthful progress / duration / now-playing state | ✅ works (cookie channel) |
-| Next / prev / shuffle / repeat while streaming | ❌ not implemented for MusicKit (P1) |
-| Album detail | ❌ backend exists, no UI |
-| Your Library = iCloud library | ❌ backend exists, no UI |
-| Cloud playlists | ⚠️ partial |
+| Next / prev / shuffle / repeat / volume while streaming | ✅ works (MusicKit queue) |
+| Album detail (catalog + iCloud) | ✅ works |
+| Your Library = iCloud library | ✅ works |
+| Cloud playlists | ✅ works (open + play) |
+| Browse tab | ✅ works (Top Albums / Top Songs) |
+| Radio stations | ❌ needs Apple's stations API |
 | Local file playback | ⏸ parked |
 | Native DRM decryption | ⚰ abandoned |
 
@@ -86,14 +89,17 @@ The readiness wait is gone; commands return immediately. State now leaves the pl
 through a first-party cookie (`mk_state`) that Rust polls every 250 ms — CSP cannot block it,
 and the `document.title` route was measured and rejected. Seek is wired to `stream_seek`.
 
-**P1 — Real transport. (next)**
-Drive MusicKit's own queue: next, previous, shuffle, repeat, stop. Today those buttons call
-the parked local engine and do nothing while streaming. Requires a real queue
-(`setQueue({ songs: [...] })`) — a single-song queue has nothing to skip to.
+**P1 — Real transport. ✅ DONE (2026-11-13).**
+MusicKit owns the queue: the clicked list's ids ride with `stream_play` and go into
+`setQueue({ songs, startWith })`. Next/previous/shuffle/repeat/volume map to
+`skipToNextItem`, `skipToPreviousItem` (restarting the song first if more than 3 s in, as
+Apple does), `shuffleMode`, `repeatMode`, `volume`, and `publish()` reports them back so the
+transport bar never guesses.
 
-**P2 — Surface the Apple library.**
-"Library" tab reads the iCloud library, "Playlists" reads cloud playlists, album cards open
-an album detail view. The welcome screen stops offering to scan a folder.
+**P2 — Surface the Apple library. ✅ DONE (2026-11-13).**
+Library/Albums/Artists read the iCloud library; album cards open a detail view with
+Play/Shuffle; cloud playlists open and play; the welcome screen offers sign-in instead of a
+folder scan; Browse shows the charts.
 
 **P3 — Polish.**
 Loading state while a song buffers, clear error when a track is unavailable, resume last

@@ -2,7 +2,8 @@
 
 > Last updated: 2026-11-13
 > Status: MVP surface works — sign in, browse, search, album detail, iCloud library, cloud
-> playlists, and full-song playback with a real transport. Radio stations and polish remain.
+> playlists, full-song playback with a real transport, and P3 polish in progress. Radio
+> stations remain the main gap.
 
 ---
 
@@ -73,6 +74,9 @@ decoder, and EME output cannot be read as PCM). Lossless is out of reach on this
 | Your Library = iCloud library | ✅ works |
 | Cloud playlists | ✅ works (open + play) |
 | Browse tab | ✅ works (Top Albums / Top Songs) |
+| Loading spinner / error toast / resume on launch | ✅ works |
+| Keyboard shortcuts | ✅ works (Space, arrows, `M`) |
+| Windows media keys | ❌ not bound |
 | Radio stations | ❌ needs Apple's stations API |
 | Local file playback | ⏸ parked |
 | Native DRM decryption | ⚰ abandoned |
@@ -101,9 +105,10 @@ Library/Albums/Artists read the iCloud library; album cards open a detail view w
 Play/Shuffle; cloud playlists open and play; the welcome screen offers sign-in instead of a
 folder scan; Browse shows the charts.
 
-**P3 — Polish.**
-Loading state while a song buffers, clear error when a track is unavailable, resume last
-song on launch, keyboard and media keys.
+**P3 — Polish. 🚧 IN PROGRESS (2026-11-13).**
+Loading spinner and error toast (transport state machine), resume-last-song on launch, and
+in-app keyboard shortcuts are in. Windows media keys, a Now Playing view and the queue drawer
+remain.
 
 **P4 — Revisit parked work.**
 Decide: develop local file playback, or delete it. Only after P0–P3.

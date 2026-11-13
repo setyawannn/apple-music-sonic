@@ -47,8 +47,8 @@ MusicKit owns the queue. `stream_play` takes the ids of the visible list
 queue and next/previous now have somewhere to go.
 
 ### P1.2 New commands + bootstrap branches — ✅
-`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume`
-(52 commands total). `__mkDo` branches: `skipToNextItem`, `skipToPreviousItem`
+`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume` (53
+commands today, after P3 added `get_last_player_state`). `__mkDo` branches: `skipToNextItem`, `skipToPreviousItem`
 (restart-if->3s, Apple's own rule), `m.shuffleMode`, `m.repeatMode`, `m.volume`.
 `publish()` now also reports `album`, `shuffle`, `repeat`, `volume`, `queueLength`, so
 the buttons repaint from the player's state instead of a local guess.
@@ -90,13 +90,31 @@ stations API, which is not wired up; `renderRadio` says so instead of showing a 
 
 ---
 
-## P3 — Polish
+## P3 — Polish — 🚧 IN PROGRESS
 
-- Transport state machine: idle / loading / playing / paused / error, with a visible
-  "buffering" state. Real state is now available, so this is finally possible.
-- Unavailable-track errors surfaced in the UI, not just `console.error`.
-- Restore last track, position, and volume on launch.
-- Space to play/pause, arrows to seek, Windows media keys.
+### P3.1 Transport state machine + error surface — ✅ DONE (2026-11-13)
+`app.js` tracks `streamPhase` (idle / loading / playing / paused / error). A play command
+enters `loading`; the first real `player-state` for that song clears it, and a 12 s watchdog
+turns a song that never starts into `error`. The play button shows a spinner while loading and
+a dismissible toast reports failures (previously only `console.error`). Verified: `node
+--check`, `npm run build`, `cargo check`, full test suite.
+
+### P3.2 Resume on launch — ✅ DONE (2026-11-13, queue path compile-verified)
+`start_state_poller` writes the last track's state to
+`%APPDATA%\com.applemusicrs.desktop\player_state.json` (throttled to song changes and ~5 s
+steps); `stream_play` writes the queue to `player_queue.json`. New command
+`get_last_player_state` (53 commands) returns both. On launch `restoreLastSession()` repaints
+the bar paused and remembers the queue; the first press of play rebuilds the queue and seeks
+back to the saved position. Live-verified: the state file was written with the real track and
+the null-id reset report was correctly ignored. The queue file/rebuild path has not been
+observed live yet.
+
+### P3.3 Keyboard shortcuts — ✅ DONE (2026-11-13)
+Space toggles play/pause, ←/→ seek ±5 s, ↑/↓ adjust volume ±5 %, ⌘/Ctrl + ←/→ skip tracks,
+`M` mutes. Ignored while typing or while a modal is open.
+
+### Remaining
+- Windows media keys (needs a global-shortcut plugin / native hook).
 - Now Playing view and a queue drawer.
 - Radio: Apple stations API.
 - Library album grouping currently keys on `artist + album name` because the library song

@@ -1,6 +1,6 @@
 # Apple Music RS — What's Done
 
-> Last updated: 2026-11-13 (after P1 + P2 shipped)
+> Last updated: 2026-11-13 (after P1 + P2 shipped; P3 in progress)
 > Status claims here are verified against the code or a recorded run. Optimistic claims from
 > earlier versions of this document were removed.
 
@@ -72,11 +72,14 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Album detail (catalog) and derived iCloud album detail | ✅ |
 | Browse (Top Albums / Top Songs) | ✅ |
 | Radio | ❌ honest placeholder (needs Apple stations API) |
+| Loading spinner + error toast (transport state machine) | ✅ |
+| Resume last track/queue on launch | ✅ state live-verified; queue rebuild compile-verified |
+| Keyboard shortcuts (Space, arrows, `M`) | ✅ |
+| Windows media keys | ❌ |
 | Now Playing full-screen view | ❌ |
 | Queue drawer | ❌ |
 | Lyrics | ❌ |
 | Settings panel | ❌ |
-| Keyboard shortcuts / media keys | ❌ |
 
 ## 5. Diagnostics — ✅ but low value
 
@@ -123,10 +126,12 @@ command queue, the cookie poller, or the frontend. Verification for those is a d
 | Transport (next/prev/shuffle/repeat/volume) | ✅ done (P1, queue model A) |
 | Catalog browse/search/charts/recs | ✅ done |
 | Album detail, iCloud library, cloud playlists | ✅ done (P2) |
+| Loading/error state, keyboard shortcuts, resume on launch | ✅ done (P3, partial) |
 | Browse / Radio | ✅ Browse · ❌ Radio (stations API) |
 | Local file playback | ⏸ parked |
 | Native decryption | ⚰ abandoned |
 
 The app is a working Apple Music player whose interface matches what the player is doing:
 the queue is the list you clicked, and the transport bar reports MusicKit's own state.
-Next milestone: P3 polish (loading/error states, resume on launch, media keys, queue drawer).
+P3 is underway: loading/error states, keyboard shortcuts and resume-on-launch are in;
+media keys, a Now Playing view and the queue drawer remain.

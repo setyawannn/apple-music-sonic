@@ -181,11 +181,51 @@ created a multi-song queue.
 1. reads `window.cookies()` (the same API the sign-in flow uses for `media-user-token`),
 2. finds `mk_state`, accepting either a percent-encoded or already-decoded value,
 3. rejects anything that is not JSON, dedupes by full string,
-4. emits the `player-state` Tauri event, which `app.js` listens for.
+4. emits the `player-state` Tauri event, which `app.js` listens for,
+5. writes the last track's state to `player_state.json` (throttled to song changes and ~5 s
+   position steps) so the next launch can restore it — a report with a null `id` never
+   overwrites the file.
 
 Because the payload is deduped, a paused player emits nothing and a playing one emits once per
 second. The frontend still smooths between reports with `Date.now() - streamAnchor`, but the
 anchor is re-set from every real report, so it cannot drift.
+
+## Transport state machine
+
+The bar must never claim to be playing while Apple's player is still buffering, so the
+frontend runs an explicit phase: `idle → loading → playing ⇄ paused`, or `error`.
+
+- `optimisticallyPlay()` enters `loading` and starts a 12 s watchdog.
+- The first `player-state` for that song id clears `loading`; reports for a *different* song
+  (the previous track) are ignored while a load is pending.
+- If the watchdog fires, the phase becomes `error` and a toast explains it. Before this, a
+  failed song just flipped the icon with a `console.error`.
+- The play button shows a spinner (`#play-spinner`) while loading.
+
+Title/artist/artwork still paint optimistically before the command is sent, so the bar is
+never empty; only the *transport* state waits for truth.
+
+## Keyboard shortcuts
+
+`app.js` binds a global keydown (ignored while typing or while a modal is open):
+
+| Key | Action |
+|-----|--------|
+| Space | Play / pause |
+| ← / → | Seek −5 s / +5 s |
+| ↑ / ↓ | Volume +5 % / −5 % |
+| ⌘/Ctrl + ← / → | Previous / next track |
+| `M` | Mute toggle |
+
+Media keys are not bound: they need a native/global hook, tracked in `02-WHATS-MISSING.md`.
+
+## Restore on launch
+
+`stream_play` writes the queue to `player_queue.json`; the poller writes the last state to
+`player_state.json` (both under `%APPDATA%\com.applemusicrs.desktop\`). `get_last_player_state`
+returns them together. On launch `restoreLastSession()` repaints the bar **paused** (Apple
+Music does not auto-play on launch) and keeps the queue; the first press of play rebuilds the
+queue via `stream_play` and seeks back to the saved position.
 
 The old design — a loopback TCP listener on `127.0.0.1:38471` with a `/ready` handshake and a
 30 s command timeout — was deleted: it never received a single packet, and the timeout made the
@@ -215,11 +255,11 @@ player after a successful sign-in.
 
 ---
 
-## Command surface (52 commands)
+## Command surface (53 commands)
 
 | Group | Count | Commands |
 |-------|-------|----------|
-| Streaming player | 10 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek`, `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume` |
+| Streaming player | 11 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek`, `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume`, `get_last_player_state` |
 | Apple Music API + auth | 15 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `play_stream_track` |
 | Native bridge + diagnostics | 3 | `get_native_bridge_status`, `import_local_apple_session`, `run_native_bridge_diagnostics` |
 | **Parked** local playback | 12 | `play_track`, `play_album`, `pause_playback`, `resume_playback`, `stop_playback`, `seek_to`, `set_volume`, `get_playback_status`, `next_track`, `prev_track`, `set_repeat_mode`, `set_shuffle` |
@@ -254,13 +294,13 @@ not part of the product.
 
 | Path | Lines | Role |
 |------|-------|------|
-| `src-tauri/src/lib.rs` | 1,192 | 52 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish), `ensure_player`, `player_command`, `start_state_poller`, auth windows, lifecycle |
+| `src-tauri/src/lib.rs` | 1,273 | 53 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish), `ensure_player`, `player_command`, `start_state_poller` (state + restore persistence), auth windows, lifecycle |
 | `src-tauri/src/api/client.rs` | 474 | REST: search, suggestions, album, charts, library, playlists |
 | `src-tauri/src/api/local_session.rs` | 397 | WebView2 cookie import |
 | `src-tauri/src/api/auth.rs` | 166 | Developer token, session persistence, storefront |
 | `src-tauri/src/api/models.rs` | 101 | Store models |
-| `src/js/app.js` | 1,864 | All UI logic and command calls (iCloud library, album detail, queue-aware playback) |
-| `src/styles/app.css` | 1,104 | Apple-style dark theme |
+| `src/js/app.js` | 2,118 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, keyboard shortcuts, resume) |
+| `src/styles/app.css` | 1,174 | Apple-style dark theme |
 | `index.html` | 176 | Shell: sidebar, main view, playback bar |
 | `src-tauri/src/audio/**`, `library/**` | 2,077 | **PARKED** local engine + library |
 | `src-tauri/src/drm/**` | 1,538 | **ABANDONED** native decrypt attempt |

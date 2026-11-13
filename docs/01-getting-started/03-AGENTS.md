@@ -26,9 +26,9 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 
 ## Quick facts
 
-- **23 Rust files, ~5,200 lines**, **52 Tauri commands** registered in `generate_handler!`
+- **23 Rust files, ~5,200 lines**, **53 Tauri commands** registered in `generate_handler!`
 - **~20 MB** release binary; RAM target **~80 MB** (not yet measured — treat old claims as aspirational)
-- Frontend: `index.html`, `src/js/app.js` (1,864 lines), `src/styles/app.css` (1,104 lines)
+- Frontend: `index.html`, `src/js/app.js` (2,118 lines), `src/styles/app.css` (1,174 lines)
 - Streaming works: hidden MusicKit WebView2 + Windows PlayReady CDM
 - Playback state works: page writes a cookie, Rust polls the cookie jar, emits `player-state`
 - Auth works: developer token scraped from Apple's web bundle + `media-user-token` cookie
@@ -91,6 +91,13 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 - Cookie values may come back percent-encoded or already decoded from `window.cookies()`;
   `start_state_poller` accepts both. Keep `mk_state` small (artwork URL included, still
   well under WebView2's per-cookie limit).
+- The poller also persists the last track to `%APPDATA%\com.applemusicrs.desktop\player_state.json`
+  (throttled) and `stream_play` persists the queue to `player_queue.json`. A report with a
+  null `id` must never overwrite the state file; the frontend restores from these via
+  `get_last_player_state` and only plays when the user asks.
+- The frontend transport is a state machine (`streamPhase`): a play command enters `loading`
+  and only a real `player-state` for that song clears it. Do not paint "playing" optimistically
+  past the icon/title — the whole point of P0 is that the bar tells the truth.
 - The hidden player is a real window. Tauri keeps the app alive while it exists, so the main
   window's `Destroyed` handler calls `app_handle().exit(0)`.
 - Sign-in wipes the shared `auth_profile` directory. `start_apple_sign_in` therefore closes
@@ -106,7 +113,7 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 
 | Path | Purpose |
 |------|---------|
-| `src-tauri/src/lib.rs` (1,192) | 52 commands, hidden player + bootstrap script (queue, transport, publish), cookie state poller, auth windows, lifecycle |
+| `src-tauri/src/lib.rs` (1,273) | 53 commands, hidden player + bootstrap script (queue, transport, publish), cookie state poller (+ restore persistence), auth windows, lifecycle |
 | `src-tauri/src/api/auth.rs` (166) | Developer token, session persistence, storefront |
 | `src-tauri/src/api/client.rs` (474) | REST client: search, album, charts, library, playlists |
 | `src-tauri/src/api/local_session.rs` (397) | Imports session from WebView2 cookie SQLite |
@@ -115,7 +122,8 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 | `src-tauri/src/library/**` (1,006) | **PARKED** local library + SQLite |
 | `src-tauri/src/drm/**` (1,538) | **ABANDONED** native decrypt attempt (diagnostics only) |
 | `src-tauri/capabilities/player.json` | Remote capability for the `player` webview |
-| `src/js/app.js` (1,864) | All UI logic (iCloud library, album detail, queue-aware playback, transport) |
+| `src/js/app.js` (2,118) | All UI logic (iCloud library, album detail, queue-aware playback, transport state machine, keyboard shortcuts, resume) |
+| `src/styles/app.css` (1,174) | Apple-style dark theme |
 
 ## Docs map
 

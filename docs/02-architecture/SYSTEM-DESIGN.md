@@ -17,7 +17,7 @@
                            │  invoke() / listen()
 ┌──────────────────────────▼──────────────────────────────────────────┐
 │ Tauri command layer — src-tauri/src/lib.rs                            │
-│   52 commands, window lifecycle, event emit                          │
+│   53 commands, window lifecycle, event emit                          │
 └──────┬───────────────────┬──────────────────────┬───────────────────┘
        │                   │                      │
 ┌──────▼──────┐   ┌────────▼─────────┐   ┌────────▼──────────────────┐
@@ -54,7 +54,8 @@ state = {
   playback: { isPlaying, currentTrackId, duration, position, volume,
               isShuffle, repeatMode },                   // PARKED local player
   streamingActive, streamIsPlaying, streamPosition, streamDuration, streamAnchor,
-  streamShuffle, streamRepeat, streamVolume, streamQueueLength  // hidden player
+  streamShuffle, streamRepeat, streamVolume, streamQueueLength,  // hidden player
+  streamPhase, restore                                          // transport state machine + last session
 }
 ```
 
@@ -76,6 +77,9 @@ MusicKit's own state. The local fork remains a wart until the parked engine is f
 | Shuffle / repeat | `stream_shuffle` / `stream_repeat` → `shuffleMode` / `repeatMode`; reported back in `player-state` |
 | Volume | `stream_volume` → `m.volume` |
 | Seek | progress bar → `stream_seek` → `seekToTime()` |
+| Track loading / failure | `streamPhase` idle→loading→playing/paused/error; spinner + toast; 12 s watchdog |
+| Launch | `get_last_player_state` → repaint bar paused, keep queue; first play rebuilds it |
+| Keyboard | Space / arrows / `M` → same handlers as the transport buttons |
 | Album detail | `get_catalog_album` → header + Play/Shuffle queue |
 | Search | `invoke("search_catalog")` → `amp-api.music.apple.com` |
 | Load Listen Now | `get_recommendations` |

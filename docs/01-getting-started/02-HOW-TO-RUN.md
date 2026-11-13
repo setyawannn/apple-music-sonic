@@ -62,11 +62,9 @@ needed.
 
 ### What you can expect to be rough
 
-- **No loading or error surface.** A failing track flips the icon silently; errors only reach
-  the console. (P3)
-- **Nothing survives a restart** except the session — last track, queue and volume are not
-  restored. (P3)
-- **No keyboard or media-key control.**
+- **Media keys are not bound.** In-app shortcuts work (Space, arrows, `M`), but the hardware
+  media keys need a native hook. (P3)
+- **No Now Playing view or queue drawer yet.** The bar shows the queue length but not the queue.
 - **Radio** is an honest placeholder: live stations need Apple's stations API.
 - **The playback bar lags reality by up to ~250 ms.** The player publishes state on events
   and on a timer; the frontend smooths between reports.

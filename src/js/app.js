@@ -59,6 +59,8 @@ const state = {
   // Last artwork URL painted into the now-playing bar, so we never re-create the
   // <img> (which made it flicker) on every once-a-second state tick.
   streamArtworkUrl: null,
+  // Debounce handle for transient empty player-state reports (see the listener).
+  streamEmptyTimer: null,
 };
 
 // ─── DOM References ────────────────────────────────────────────
@@ -234,6 +236,11 @@ try {
 // Streamed playback runs inside the hidden player webview. Its CSP blocks loopback
 // fetch and Tauri IPC is unavailable on remote origins, so it publishes state through
 // the `mk_state` cookie and Rust re-emits it here as `player-state`.
+//
+// MusicKit occasionally reports a phantom *empty* state (no item, no queue) for a
+// moment while a real song is loaded. Applying it verbatim blanks the now-playing bar
+// and the row highlight for a tick — the flicker. A null-id report is therefore
+// debounced: it only clears the UI if no real report follows.
 try {
   listen("player-state", (event) => {
     let payload = event?.payload;
@@ -242,68 +249,110 @@ try {
     }
     if (!payload) return;
 
-    state.streamIsPlaying = !!payload.isPlaying;
-    state.streamPosition = payload.position || 0;
-    state.streamDuration = payload.duration || 0;
-    // A null id means the player is empty (stopped/reset). Do not let that cancel a
-    // load that is still in flight, or drop a stream the user just started.
-    if (payload.id) {
-      state.streamingActive = true;
-    } else if (!state.streamPendingId && state.streamPhase !== "loading") {
-      state.streamingActive = false;
-    }
-    state.streamCurrentId = payload.id || null;
-    // Keep the Up Next highlight in sync without a full re-render of the list.
-    if (state.queueOpen) markQueuePlaying();
-    // Re-anchor the local clock so the progress bar stays honest.
-    state.streamAnchor = Date.now() - state.streamPosition * 1000;
-    state.streamShuffle = !!payload.shuffle;
-    state.streamRepeat = payload.repeat || 0;
-    state.streamQueueLength = payload.queueLength || 0;
-    if (typeof payload.volume === "number") state.streamVolume = payload.volume;
-
-    // A real report for the song we're waiting on ends the loading state. While a
-    // load is pending, reports for another song (or a null id) are ignored.
-    if (!state.streamPendingId || (payload.id && payload.id === state.streamPendingId)) {
-      settleStreamPhase(state.streamIsPlaying);
-    }
-
-    paintStreamControls();
-
-    if (payload.title) {
-      if (nowPlayingTitle) nowPlayingTitle.textContent = payload.title;
-      if (nowPlayingArtist) nowPlayingArtist.textContent = payload.artist || "Apple Music";
-      const badge = $("#now-playing-badge");
-      if (badge) badge.style.display = "block";
-    }
-
-    if (payload.artwork) {
-      const formatted = payload.artwork.replace("{w}", "100").replace("{h}", "100").replace("{f}", "jpg");
-      // Rebuild the <img> only when the artwork actually changes. Re-setting
-      // innerHTML on every state tick (once a second while playing) made the
-      // now-playing art flicker.
-      if (formatted !== state.streamArtworkUrl) {
-        state.streamArtworkUrl = formatted;
-        const artImg = $("#now-playing-art");
-        if (artImg) {
-          artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
-        }
+    if (!payload.id) {
+      const haveReal = state.streamCurrentId || state.streamPendingId;
+      if (!haveReal) {
+        // Nothing playing yet — reflect the empty state immediately.
+        applyPlayerState(payload);
+        return;
       }
+      clearTimeout(state.streamEmptyTimer);
+      state.streamEmptyTimer = setTimeout(() => {
+        if (state.streamCurrentId) clearNowPlayingUI();
+      }, 1500);
+      return;
     }
 
-    const fill = $("#progress-fill");
-    if (fill && state.streamDuration > 0) {
-      fill.style.width = `${Math.min(100, (state.streamPosition / state.streamDuration) * 100)}%`;
-    }
-
-    // Highlight the row that is actually playing (Apple's list state), and clear
-    // the highlight from the rest.
-    document.querySelectorAll(".track-item.stream-track").forEach((el) => {
-      el.classList.toggle("playing", !!payload.id && el.dataset.catalogId === payload.id);
-    });
+    clearTimeout(state.streamEmptyTimer);
+    applyPlayerState(payload);
   });
 } catch (err) {
   console.warn("Could not register player-state listener:", err);
+}
+
+// Apply a real (non-empty) player state to the UI.
+function applyPlayerState(payload) {
+  state.streamIsPlaying = !!payload.isPlaying;
+  state.streamPosition = payload.position || 0;
+  state.streamDuration = payload.duration || 0;
+  // A null id means the player is empty (stopped/reset). Do not let that cancel a
+  // load that is still in flight, or drop a stream the user just started.
+  if (payload.id) {
+    state.streamingActive = true;
+  } else if (!state.streamPendingId && state.streamPhase !== "loading") {
+    state.streamingActive = false;
+  }
+  state.streamCurrentId = payload.id || null;
+  // Keep the Up Next highlight in sync without a full re-render of the list.
+  if (state.queueOpen) markQueuePlaying();
+  // Re-anchor the local clock so the progress bar stays honest.
+  state.streamAnchor = Date.now() - state.streamPosition * 1000;
+  state.streamShuffle = !!payload.shuffle;
+  state.streamRepeat = payload.repeat || 0;
+  state.streamQueueLength = payload.queueLength || 0;
+  if (typeof payload.volume === "number") state.streamVolume = payload.volume;
+
+  // A real report for the song we're waiting on ends the loading state. While a
+  // load is pending, reports for another song (or a null id) are ignored.
+  if (!state.streamPendingId || (payload.id && payload.id === state.streamPendingId)) {
+    settleStreamPhase(state.streamIsPlaying);
+  }
+
+  paintStreamControls();
+
+  if (payload.title) {
+    if (nowPlayingTitle) nowPlayingTitle.textContent = payload.title;
+    if (nowPlayingArtist) nowPlayingArtist.textContent = payload.artist || "Apple Music";
+    const badge = $("#now-playing-badge");
+    if (badge) badge.style.display = "block";
+  }
+
+  if (payload.artwork) {
+    const formatted = payload.artwork.replace("{w}", "100").replace("{h}", "100").replace("{f}", "jpg");
+    // Rebuild the <img> only when the artwork actually changes. Re-setting
+    // innerHTML on every state tick (once a second while playing) made the
+    // now-playing art flicker.
+    if (formatted !== state.streamArtworkUrl) {
+      state.streamArtworkUrl = formatted;
+      const artImg = $("#now-playing-art");
+      if (artImg) {
+        artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
+      }
+    }
+  }
+
+  const fill = $("#progress-fill");
+  if (fill && state.streamDuration > 0) {
+    fill.style.width = `${Math.min(100, (state.streamPosition / state.streamDuration) * 100)}%`;
+  }
+
+  // Highlight the row that is actually playing (Apple's list state), and clear
+  // the highlight from the rest.
+  document.querySelectorAll(".track-item.stream-track").forEach((el) => {
+    el.classList.toggle("playing", !!payload.id && el.dataset.catalogId === payload.id);
+  });
+}
+
+// Reset the now-playing area when playback really stops (nothing follows the empty).
+function clearNowPlayingUI() {
+  clearTimeout(state.streamEmptyTimer);
+  state.streamingActive = false;
+  state.streamIsPlaying = false;
+  state.streamCurrentId = null;
+  state.streamPosition = 0;
+  state.streamDuration = 0;
+  state.streamArtworkUrl = null;
+  if (nowPlayingTitle) nowPlayingTitle.textContent = "No Track Selected";
+  if (nowPlayingArtist) nowPlayingArtist.textContent = "Open your library to start playing";
+  const badge = $("#now-playing-badge");
+  if (badge) badge.style.display = "none";
+  const artImg = $("#now-playing-art");
+  if (artImg) artImg.innerHTML = "";
+  const fill = $("#progress-fill");
+  if (fill) fill.style.width = "0%";
+  if (currentTime) currentTime.textContent = "0:00";
+  if (totalTime) totalTime.textContent = "0:00";
+  paintStreamPhase();
 }
 
 // The Up Next list arrives on its own event, base64-decoded by Rust.

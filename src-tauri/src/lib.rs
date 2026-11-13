@@ -286,6 +286,14 @@ const PLAYER_LABEL: &str = "player";
 
 const PLAYER_BOOTSTRAP: &str = r#"
 (function () {
+  // Windows injects this script into EVERY frame (wry's `for_main_frame_only` is
+  // ignored there). music.apple.com's subframes run their own MusicKit instance
+  // with no queue, which shares the persisted volume but reports an empty
+  // now-playing item — so an unguarded subframe publishes an empty `mk_state`
+  // that fights the real one and makes the now-playing bar flicker. Only the top
+  // document may drive playback.
+  if (window.top !== window.self) return;
+
   window.__mkReady = new Promise(function (res) { window.__mkResolve = res; });
   window.__mkQueue = window.__mkQueue || [];
 

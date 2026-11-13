@@ -260,10 +260,12 @@ Playlists are the user's **Apple Music library playlists**. The local SQLite pla
 Reading: `get_cloud_playlists` → `/v1/me/library/playlists`. **Do not send `include=tracks`** —
 Apple returns 400 and the list comes back empty (see `docs/04-bugs/05-PLAYLIST-LIST-400.md`).
 Tracks are fetched on demand by `get_cloud_playlist_tracks` when a playlist is opened. Sync is
-automatic: the playlist list refreshes on sign-in, on opening the Playlists view, and on window
-focus; the **open playlist's tracks** re-poll every 30 s (and on focus, and right after you add
-a song), repainting only when the contents actually change — there is no Sync button.
-`get_cloud_playlists` logs `[PLAYLIST] loaded N` so a failure can't hide again.
+automatic but **event-driven — never on a timer**: the playlist list refreshes on sign-in, on
+opening the Playlists view, and on window focus; the **open playlist's tracks** re-check on focus
+and right after you add a song, repainting only when the contents actually change. There is no
+Sync button, and no polling (a 30 s poll repainted the list under the user while playing — see
+`docs/04-bugs/06-AUTOREFRESH-FLICKER.md`). `get_cloud_playlists` logs `[PLAYLIST] loaded N` so a
+failure can't hide again.
 
 Writing (all verified against a live session during a scratch create→add→rename→delete probe):
 

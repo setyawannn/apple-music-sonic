@@ -106,8 +106,13 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
   - **Never add `include=tracks` to the list URL** — Apple returns **400** and the playlist list
     silently comes back empty. Tracks are fetched on demand by `get_playlist_tracks`. The list
     carries no `trackCount`, so the UI shows a count only when it knows one. Sync is automatic
-    (list on sign-in / view-open / focus; the open playlist re-polls every 30 s) — there is no
-    Sync button by design. See `docs/04-bugs/05-PLAYLIST-LIST-400.md`.
+    but **event-driven, never on a timer** (list on sign-in / view-open / focus; the open
+    playlist re-checks on focus and after an add) — a periodic poll repainted the list under the
+    user while playing. See `docs/04-bugs/05-PLAYLIST-LIST-400.md` and
+    `06-AUTOREFRESH-FLICKER.md`.
+  - **Never rebuild the now-playing `<img>` (or any node) on every `player-state` tick** — it
+    fires ~once a second while playing, and re-setting `innerHTML` makes the art flicker. Guard
+    it with `state.streamArtworkUrl`. See `docs/04-bugs/06-AUTOREFRESH-FLICKER.md`.
   - **Rename must NOT send `?l=`** (`PUT /v1/me/library/playlists/{id}` with a bare
     `{ "attributes": { "name" } }` body → 204). With the query param Apple returns **500**.
     Create / add-tracks / delete do take `?l=`.
@@ -163,7 +168,8 @@ docs/
 │   ├── 02-WINDOW-INIT-FIX.md     ← Blank-window fix (solved, historical)
 │   ├── 03-PLAYER-STATE-CHANNEL.md← Cookie state channel (fixed; CSP + title route dead)
 │   ├── 04-PROGRESS-BAR-SEEK.md   ← Seek hit the wrong player (fixed)
-│   └── 05-PLAYLIST-LIST-400.md   ← Playlists invisible: `include=tracks` → 400 (fixed)
+│   ├── 05-PLAYLIST-LIST-400.md   ← Playlists invisible: `include=tracks` → 400 (fixed)
+│   └── 06-AUTOREFRESH-FLICKER.md ← Timer repaint + artwork rebuild flickered playback (fixed)
 └── 05-reference/                 ← Decode reports, API contracts (see README there)
 ```
 

@@ -45,8 +45,9 @@ So `include=tracks` is simply not valid here, and neither `include=trackCount` n
 3. Surface sync failures in the UI (a toast) instead of only `console.warn`, so the next
    failure is visible.
 4. **Auto-sync**: the manual Sync button was removed. The playlist list refreshes on sign-in,
-   on opening the Playlists view, and on window focus; the open playlist's tracks re-poll every
-   30 s and after you add a song, repainting only when the contents change.
+   on opening the Playlists view, and on window focus; the open playlist's tracks re-check on
+   focus and after you add a song. (An earlier version polled every 30 s; that repaint flickered
+   playback and was removed — see `06-AUTOREFRESH-FLICKER.md`.)
 
 ## Evidence
 

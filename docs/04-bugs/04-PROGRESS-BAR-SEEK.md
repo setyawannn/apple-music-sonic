@@ -1,78 +1,59 @@
-# Bug 04 — The progress bar seeks the wrong player
+# Bug 04 — The progress bar seeked the wrong player
 
-> **Status: OPEN — P0, small fix**
-> Found: 2026-11-13 · Affects: seeking while streaming
+> **Status: FIXED & VERIFIED ✅** — 2026-11-13
+> Fixed in: `src/js/app.js` (progress-bar click handler)
+> Depends on: `03-PLAYER-STATE-CHANNEL.md` (now fixed, so duration is real)
 
 ---
 
 ## Symptom
 
-While an Apple Music track is streaming, clicking anywhere on the progress bar **moves the
-bar to the click position and immediately snaps it back toward 0 %**, while the audio keeps
-playing from wherever it was. Nothing is seeked.
+While an Apple Music track streamed, clicking the progress bar moved the fill to the click
+position and immediately snapped it back toward 0 %, while audio kept playing from wherever it
+was. Nothing was seeked.
 
 ## Cause
 
-`src/js/app.js:1205-1218`:
+The handler always targeted the **parked local engine**:
 
 ```js
-progressBar?.addEventListener("click", async (e) => {
-  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  progressFill.style.width = `${pct * 100}%`;
-  const targetSecs = pct * (state.playback.duration || 0);   // ← parked local engine
-  await invoke("seek_to", { positionSecs: targetSecs });     // ← parked local engine
-  state.playback.position = targetSecs;
-  currentTime.textContent = formatTime(targetSecs);
-});
+const targetSecs = pct * (state.playback.duration || 0);   // local engine's duration
+await invoke("seek_to", { positionSecs: targetSecs });     // local engine
 ```
 
-Two problems:
-
-1. `state.playback.duration` is the **local engine's** duration, which is 0 while streaming.
-   So `targetSecs = 0` and the bar collapses to the left edge.
-2. `seek_to` targets `audio::Engine`, which has nothing loaded. The streamed player is never
-   told anything.
-
-The streaming branch of `syncPlaybackStatus` (`app.js:1247-1265`) then redraws the bar from
-the local clock, which is why the movement is immediately overwritten.
+`state.playback.duration` is 0 while streaming, so `targetSecs` was 0 and the bar collapsed to
+the left edge. `seek_to` drove `audio::Engine`, which had nothing loaded. The streaming branch
+of `syncPlaybackStatus` then redrew the bar from its own clock, overwriting the movement.
 
 ## Fix
 
+The handler now branches on ownership of playback:
+
 ```js
-progressBar?.addEventListener("click", async (e) => {
-  const rect = progressBar.getBoundingClientRect();
-  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-
-  if (state.streamingActive) {
-    const total = state.streamDuration || 0;
-    if (!(total > 0)) return;                       // unknown duration → ignore the click
-    const target = pct * total;
-    state.streamPosition = target;
-    state.streamAnchor = Date.now() - target * 1000; // keep the local clock honest
-    progressFill.style.width = `${pct * 100}%`;
-    currentTime.textContent = formatTime(target);
-    try {
-      await invoke("stream_seek", { position: target });
-    } catch (err) {
-      console.error("Stream seek failed:", err);
-    }
-    return;
-  }
-
-  // parked local engine path (unchanged, dormant)
-  const targetSecs = pct * (state.playback.duration || 0);
-  ...
-});
+if (state.streamingActive) {
+  const total = state.streamDuration || 0;
+  if (!(total > 0)) return;                 // duration unknown → ignore, don't snap to 0
+  const target = pct * total;
+  state.streamPosition = target;
+  state.streamAnchor = Date.now() - target * 1000;   // keep the smoothing clock honest
+  progressFill.style.width = `${pct * 100}%`;
+  currentTime.textContent = formatTime(target);
+  try { await invoke("stream_seek", { position: target }); }
+  catch (err) { console.error("Stream seek failed:", err); }
+  return;
+}
+// unchanged parked local-engine path below
 ```
 
-`stream_seek` already maps to `seekToTime()` in `PLAYER_BOOTSTRAP`, so no backend change is
-needed.
+`stream_seek` → `player_command("seek", …)` → `seekToTime()` in `PLAYER_BOOTSTRAP`, so no
+backend change was needed. Re-anchoring matters: the bar is smoothed by
+`Date.now() - streamAnchor` between reports, so without it the fill jumps back until the next
+`player-state` arrives.
 
-## Dependency
+## Verified
 
-Real duration comes from the player, so this fix is only *correct* after
-`03-PLAYER-STATE-CHANNEL.md` lands. Until then, seeking will work against the catalog's
-`duration_ms`, which is usually close but not authoritative — acceptable as a stopgap.
+Clicking mid-stream jumps the audio and the fill stays where it was placed; the next
+`player-state` report (within 500 ms) confirms the same position.
 
 ## Acceptance criteria
 

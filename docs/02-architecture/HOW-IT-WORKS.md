@@ -115,7 +115,7 @@ So the app borrows one. Consequences, stated plainly:
 |------|--------|
 | Audio ceiling | **AAC 256 kbps**. WebView2 exposes no ALAC decoder (`mse.alac = false`) and EME output cannot be read back as PCM, so "lossless" is unreachable on this path. |
 | Memory | A hidden Chromium instance. The old "~80 MB total" target is **not measured** and should be treated as aspirational. |
-| State feedback | The page's CSP blocks our loopback channel, so the UI currently guesses position. See below. |
+| State feedback | Works, but the only path out of the page is a cookie (CSP blocks fetch, WebView2 blocks the title route). See below. |
 | Startup | Mitigated by pre-warming the player during `setup()`. |
 
 Probe results recorded on this machine:
@@ -129,30 +129,40 @@ MSE                     : aac = true, alac = false, ec3 = false
 
 ---
 
-## Playback state — intended vs actual
+## Playback state — the cookie channel
 
-**Intended design.** The page reports once every 250 ms and on real transitions
-(`playbackStateDidChange`, `nowPlayingItemDidChange`, `playbackTimeDidChange`) by POSTing
-JSON to a loopback server:
+The page reports on real transitions (`playbackStateDidChange`, `nowPlayingItemDidChange`,
+`playbackTimeDidChange`) and on a 500 ms tick. It cannot report over HTTP: music.apple.com's
+CSP blocks loopback `fetch()`. It cannot report through the window title either — WebView2 does
+not mirror `document.title` to the native title (measured; the title stayed
+`"Apple Music Player"`).
 
+It reports through a **cookie**, which is first-party and CSP-immune:
+
+```js
+document.cookie = 'mk_state=' + encodeURIComponent(json) +
+                  '; path=/; max-age=300; Secure; SameSite=Lax';
 ```
-POST http://127.0.0.1:38471/state   ← position, duration, id, title, artist, artwork
-POST http://127.0.0.1:38471/ready   ← page can accept commands
+
+```json
+{"isPlaying":true,"position":17,"duration":155,"id":"6812102720",
+ "title":"hang up","artist":"Kendis","artwork":"https://is1-ssl.mzstatic.com/..."}
 ```
 
-`start_state_listener()` receives it and emits the `player-state` Tauri event, which
-`app.js` listens for.
+`start_state_poller()` runs a 250 ms task in Rust that:
 
-**Actual reality.** Every request is blocked by music.apple.com's CSP before it leaves the
-page. Across all recorded dev sessions the server has received exactly zero `/state`,
-`/ready`, or `/debug` requests. Therefore:
+1. reads `window.cookies()` (the same API the sign-in flow uses for `media-user-token`),
+2. finds `mk_state`, accepting either a percent-encoded or already-decoded value,
+3. rejects anything that is not JSON, dedupes by full string,
+4. emits the `player-state` Tauri event, which `app.js` listens for.
 
-- `PLAYER_READY` is always `false`
-- `player_command` waits 30 s on a notification that never fires, then returns `Err`
-- the frontend's optimistic state survives until that `Err` lands and resets it
-- progress is `Date.now() - streamAnchor`, and duration comes from catalog metadata
+Because the payload is deduped, a paused player emits nothing and a playing one emits once per
+second. The frontend still smooths between reports with `Date.now() - streamAnchor`, but the
+anchor is re-set from every real report, so it cannot drift.
 
-This is the top P0 bug: `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md`.
+The old design — a loopback TCP listener on `127.0.0.1:38471` with a `/ready` handshake and a
+30 s command timeout — was deleted: it never received a single packet, and the timeout made the
+play icon flip back after 30 s. History and evidence: `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md`.
 
 ---
 
@@ -171,20 +181,20 @@ All three paths end with a `media-user-token` string, persisted to
    WebView2, then polls `window.cookies()` once per second for `media-user-token`, validates
    it against Apple, and closes on success.
 
-⚠️ The sign-in flow **deletes the shared `auth_profile` directory** before opening the login
-window. The hidden player uses that same directory. Until the profile lifecycle is fixed,
-restart the app after signing in. See bug 03.
+The sign-in flow **deletes the shared `auth_profile` directory** before opening the login
+window, and the hidden player uses that same directory. `start_apple_sign_in` therefore closes
+the `player` window first, waits for WebView2 to release the profile lock, and re-warms the
+player after a successful sign-in.
 
 ---
 
-## Command surface (48 commands)
+## Command surface (47 commands)
 
 | Group | Count | Commands |
 |-------|-------|----------|
 | Streaming player | 5 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek` |
 | Apple Music API + auth | 15 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `play_stream_track` |
 | Native bridge + diagnostics | 3 | `get_native_bridge_status`, `import_local_apple_session`, `run_native_bridge_diagnostics` |
-| Diagnostics | 1 | `probe_report` |
 | **Parked** local playback | 12 | `play_track`, `play_album`, `pause_playback`, `resume_playback`, `stop_playback`, `seek_to`, `set_volume`, `get_playback_status`, `next_track`, `prev_track`, `set_repeat_mode`, `set_shuffle` |
 | **Parked** local library | 12 | `scan_library`, `get_albums`, `get_tracks`, `get_artists`, `get_playlists`, `get_track_count`, `create_playlist`, `add_to_playlist`, `remove_from_playlist`, `delete_playlist`, `import_playlist`, `export_playlist` |
 
@@ -197,9 +207,10 @@ not part of the product.
 
 - Main window: local page, `security.csp: null` in `tauri.conf.json`.
 - Hidden player: remote origin, so it needs `src-tauri/capabilities/player.json`
-  (`windows: ["player", "player_probe"]`, `remote.urls: ["https://music.apple.com/*"]`).
-- The loopback listener binds `127.0.0.1:38471` only, accepts any POST body, and never
-  authenticates the caller. It is a local state pipe for a local-only app — do not widen it.
+  (`windows: ["player"]`, `remote.urls: ["https://music.apple.com/*"]`).
+- The `mk_state` cookie is the only data path out of the player page: first-party,
+  same-site, `Secure`, `max-age=300`, path `/`. It carries no credentials — only playback
+  position and now-playing metadata.
 - Secrets never enter git: `session.json`, `auth_profile/`, `*.log`, `*.db` are ignored.
 
 ---
@@ -216,12 +227,12 @@ not part of the product.
 
 | Path | Lines | Role |
 |------|-------|------|
-| `src-tauri/src/lib.rs` | 1,115 | 48 commands, `PLAYER_BOOTSTRAP`, `ensure_player`, `player_command`, state listener, auth windows, lifecycle |
+| `src-tauri/src/lib.rs` | 1,095 | 47 commands, `PLAYER_BOOTSTRAP`, `ensure_player`, `player_command`, `start_state_poller`, auth windows, lifecycle |
 | `src-tauri/src/api/client.rs` | 474 | REST: search, suggestions, album, charts, library, playlists |
 | `src-tauri/src/api/local_session.rs` | 397 | WebView2 cookie import |
 | `src-tauri/src/api/auth.rs` | 166 | Developer token, session persistence, storefront |
 | `src-tauri/src/api/models.rs` | 101 | Store models |
-| `src/js/app.js` | 1,349 | All UI logic and command calls |
+| `src/js/app.js` | 1,369 | All UI logic and command calls |
 | `src/styles/app.css` | 1,011 | Apple-style dark theme |
 | `index.html` | 176 | Shell: sidebar, main view, playback bar |
 | `src-tauri/src/audio/**`, `library/**` | 2,077 | **PARKED** local engine + library |

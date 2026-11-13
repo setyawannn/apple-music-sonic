@@ -1,6 +1,6 @@
 # Apple Music RS — What's Done
 
-> Last updated: 2026-11-13
+> Last updated: 2026-11-13 (after P0 shipped)
 > Status claims here are verified against the code or a recorded run. Optimistic claims from
 > earlier versions of this document were removed.
 
@@ -21,10 +21,11 @@
 | Session import from official app | `import_local_apple_session` reads the WebView2 cookie SQLite |
 | Storefront/language | `set_storefront`, persisted |
 | Sign out | `sign_out` clears token + disk |
+| Player survives sign-in | profile closed before the wipe, re-warmed after success |
 
 Verified end to end: `/v1/me/library/songs` returned 200 with a live session.
 
-## 2. Streaming playback — ✅ (with a big caveat)
+## 2. Streaming playback — ✅
 
 | Item | Status | Evidence |
 |------|--------|----------|
@@ -33,16 +34,13 @@ Verified end to end: `/v1/me/library/songs` returned 200 with a live session.
 | Pre-warm at startup | ✅ | `setup()` calls `ensure_player()` |
 | Page-side command queue | ✅ | `window.__mkQueue` + `__mkDrain` in `PLAYER_BOOTSTRAP` |
 | Nonce dedupe | ✅ | fresh click = fresh nonce; re-dispatch = no-op |
+| Commands never block | ✅ | `player_command` dispatches and returns `Ok(())` |
 | Play / pause / resume / stop | ✅ | `stream_*` commands |
-| Seek | ⚠️ | `stream_seek` exists; **the UI never calls it** |
-| Truthful state feedback | ❌ | loopback channel blocked by CSP — see `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md` |
-| Next / previous | ❌ | no MusicKit queue command exists |
-| Shuffle / repeat | ❌ | backend commands drive only the parked local engine |
+| Truthful state feedback | ✅ | `mk_state` cookie → `start_state_poller` → `player-state`; real position, duration, title, artist, artwork verified in `dev-run.log` |
+| Seek | ✅ | progress bar branches to `stream_seek` while streaming |
+| Next / previous | ❌ | no MusicKit queue command exists yet (P1) |
+| Shuffle / repeat | ❌ | backend commands drive only the parked local engine (P1) |
 | Audio quality | ⚠️ | AAC 256 kbps ceiling (no ALAC decoder in WebView2, EME output not readable) |
-
-**The important caveat:** playback works, but the *interface* is guessing. The player cannot
-report position, duration, or now-playing back to us right now, and `stream_play` blocks for
-30 s on a readiness signal that can never arrive.
 
 ## 3. Apple Music catalog API — ✅ backend / ⚠️ UI
 
@@ -67,6 +65,7 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Apple-style dark theme, sidebar, album grid, persistent transport | ✅ |
 | Playback bar with artwork, title, artist, progress, volume | ✅ |
 | Optimistic click feedback | ✅ |
+| Real progress and play/pause sync | ✅ |
 | Now Playing full-screen view | ❌ |
 | Queue drawer | ❌ |
 | Lyrics | ❌ |
@@ -77,7 +76,7 @@ Backend methods in `api/client.rs` are implemented and exercised:
 
 `get_native_bridge_status` and `run_native_bridge_diagnostics` report Apple's install path,
 staged DLLs, and memory. They exist to support the abandoned FFI path and are not needed to
-stream.
+stream. The old `probe_report` command was deleted with the loopback channel.
 
 ## 6. Parked — local file playback ⏸
 
@@ -93,19 +92,20 @@ See `04-PARKED-LOCAL-PLAYBACK.md`.
 `SetDllDirectoryW` with an RAII scope. It loads. It never decrypted anything: the license
 challenge must come from a real CDM. Kept only because two diagnostics commands reference it.
 
-## 8. Tests — 128 pass, 0 fail (2026-11-13)
+## 8. Tests — 130 pass, 0 fail (2026-11-13)
 
 | Suite | Tests | What it actually covers |
 |-------|-------|-------------------------|
-| Unit (in-module) | 48 | cookie parsing, DLL loader/locator/bindings |
+| Unit (in-module) | 50 | cookie parsing, percent-decode of the state channel, DLL loader/locator/bindings |
 | `api_acceptance_tests` | 16 | models, JSON shapes, error paths |
 | `audio_acceptance_tests` | 16 | parked local engine |
-| `ffi_acceptance_tests` | 16 | abandoned DLL bindings |
+| `ffi_acceptance_tests` | 16 | abandoned DLL bindings (flaky under load: they stage DLLs into a shared dir) |
 | `library_acceptance_tests` | 16 | parked SQLite library |
 | `streaming_acceptance_tests` | 16 | HLS parsers + parked stream cache |
 
-**Nothing tests the shipped streaming path** — no test touches the hidden webview, the JS
-command queue, the loopback listener, or the frontend.
+**Nothing tests the live streaming path** — no test touches the hidden webview, the JS
+command queue, the cookie poller, or the frontend. Verification for those is a dev run with
+`[PLAYER] state {...}` lines in the log.
 
 ## Summary
 
@@ -113,12 +113,12 @@ command queue, the loopback listener, or the frontend.
 |------|-------|
 | Auth ($0) | ✅ done |
 | Full-song streaming | ✅ works |
-| Playback UI truth | ❌ P0 gap |
-| Transport (next/prev/shuffle/repeat/seek) | ❌ missing for streaming |
+| Playback state truth | ✅ done (P0) |
+| Transport (next/prev/shuffle/repeat) | ❌ P1 |
 | Catalog browse/search/charts/recs | ✅ done |
 | Album detail, iCloud library | ⚠️ backend done, UI missing |
 | Local file playback | ⏸ parked |
 | Native decryption | ⚰ abandoned |
 
-The app is a working Apple Music player with a partially wired interface. The next milestone
-is not more features — it is making the interface match what the player is actually doing.
+The app is a working Apple Music player whose interface now matches what the player is doing.
+Next milestone: real transport (P1).

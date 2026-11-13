@@ -26,10 +26,11 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 
 ## Quick facts
 
-- **23 Rust files, 5,889 lines**, **48 Tauri commands** registered in `generate_handler!`
+- **23 Rust files, 5,869 lines**, **47 Tauri commands** registered in `generate_handler!`
 - **~20 MB** release binary; RAM target **~80 MB** (not yet measured — treat old claims as aspirational)
-- Frontend: `index.html`, `src/js/app.js` (1,349 lines), `src/styles/app.css` (1,011 lines)
+- Frontend: `index.html`, `src/js/app.js` (1,369 lines), `src/styles/app.css` (1,011 lines)
 - Streaming works: hidden MusicKit WebView2 + Windows PlayReady CDM
+- Playback state works: page writes a cookie, Rust polls the cookie jar, emits `player-state`
 - Auth works: developer token scraped from Apple's web bundle + `media-user-token` cookie
 
 ## How streaming works (the one architecture fact that matters)
@@ -37,10 +38,15 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 ```
 click a catalog song
   → invoke("stream_play", { songId })
-  → Rust evals a job into the hidden "player" webview (music.apple.com/id/)
+  → Rust evals a job into the hidden "player" webview (music.apple.com/id/) and returns Ok
   → page's MusicKit instance: setQueue({ song }) then play()
   → Windows PlayReady CDM decrypts FairPlay
   → audio plays
+
+player state (twice a second, plus on every player event)
+  → page: document.cookie = "mk_state=" + encodeURIComponent(json)
+  → Rust: start_state_poller reads window.cookies() every 250 ms
+  → emit("player-state", json) → app.js updates icon, position, title, artwork
 ```
 
 - Hidden window label: `player`, created by `ensure_player()` in `src-tauri/src/lib.rs`,
@@ -51,6 +57,10 @@ click a catalog song
   MusicKit loads still runs. This replaced the old blind retry loop.
 - Every command carries a **nonce**; re-dispatch of the same nonce is a no-op and a fresh
   click always gets a fresh nonce.
+- `player_command` **never waits for readiness**. There is no handshake, no timeout, no retry.
+  Adding one back is a regression: the page queue already guarantees ordering.
+- State leaves the page via **cookie**, not `fetch()` (CSP blocks loopback) and not
+  `document.title` (WebView2 does not mirror it to the native window title — verified).
 
 **Native Rust decryption is abandoned.** The license challenge can only be produced by a
 CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_status` and
@@ -70,25 +80,31 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 
 ## Environment gotchas (learned the hard way)
 
-- music.apple.com's CSP blocks `fetch()` to `http://127.0.0.1:38471`, so the loopback state
-  channel has **never** received a packet. UI state is currently a local clock. See
-  `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md`.
-- Because of that, `player_command` currently waits up to 30 s for a `/ready` signal that
-  never arrives, then returns `Err`. This is a known P0 bug, not intended behavior.
+- music.apple.com's CSP blocks `fetch()` to loopback (`127.0.0.1`), so a HTTP state
+  channel is impossible from the player page. That is why state travels through a cookie.
+  See `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md` (fixed).
+- WebView2 does **not** mirror `document.title` to the native window title. The title
+  channel was tried and failed: `window.title()` stayed `"Apple Music Player"` forever.
+  Do not retry it.
+- Cookie values may come back percent-encoded or already decoded from `window.cookies()`;
+  `start_state_poller` accepts both. Keep `mk_state` small (artwork URL included, still
+  well under WebView2's per-cookie limit).
 - The hidden player is a real window. Tauri keeps the app alive while it exists, so the main
   window's `Destroyed` handler calls `app_handle().exit(0)`.
-- After sign-in the auth profile directory is wiped. The hidden player must be closed or
-  recreated around sign-in, otherwise it keeps a dead session.
+- Sign-in wipes the shared `auth_profile` directory. `start_apple_sign_in` therefore closes
+  the `player` window first (and waits for the lock to release) and re-warms it afterwards.
+  Remove either half and sign-in breaks playback until restart.
 - Do not touch `tauri.conf.json`'s `security.csp: null` without checking the injected
   bootstrap script; the main window is a local page, the hidden player is remote.
 - Shell quirk on this machine: PowerShell rejects some compound commands; run simple,
-  separate commands.
+  separate commands. `cargo test` and `git push` report `Exit code: 1` because they write to
+  stderr — judge by the output lines.
 
 ## Where things live
 
 | Path | Purpose |
 |------|---------|
-| `src-tauri/src/lib.rs` (1,115) | 48 commands, hidden player + bootstrap script, auth windows, state listener, lifecycle |
+| `src-tauri/src/lib.rs` (1,095) | 47 commands, hidden player + bootstrap script, cookie state poller, auth windows, lifecycle |
 | `src-tauri/src/api/auth.rs` (166) | Developer token, session persistence, storefront |
 | `src-tauri/src/api/client.rs` (474) | REST client: search, album, charts, library, playlists |
 | `src-tauri/src/api/local_session.rs` (397) | Imports session from WebView2 cookie SQLite |
@@ -97,7 +113,7 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 | `src-tauri/src/library/**` (1,006) | **PARKED** local library + SQLite |
 | `src-tauri/src/drm/**` (1,538) | **ABANDONED** native decrypt attempt (diagnostics only) |
 | `src-tauri/capabilities/player.json` | Remote capability for the `player` webview |
-| `src/js/app.js` (1,349) | All UI logic |
+| `src/js/app.js` (1,369) | All UI logic |
 
 ## Docs map
 
@@ -116,10 +132,10 @@ docs/
 │   ├── 03-TO-DO.md               ← Ordered work plan (P0…P4)
 │   └── 04-PARKED-LOCAL-PLAYBACK.md ← Frozen feature + revisit options
 ├── 04-bugs/
-│   ├── 01-DELAYED-PLAY.md        ← Play delay: fixed parts + what still hangs
+│   ├── 01-DELAYED-PLAY.md        ← Play delay: three timers, all fixed
 │   ├── 02-WINDOW-INIT-FIX.md     ← Blank-window fix (solved, historical)
-│   ├── 03-PLAYER-STATE-CHANNEL.md← Dead state channel + 30 s ready wait
-│   └── 04-PROGRESS-BAR-SEEK.md   ← Seek hits the wrong player
+│   ├── 03-PLAYER-STATE-CHANNEL.md← Cookie state channel (fixed; CSP + title route dead)
+│   └── 04-PROGRESS-BAR-SEEK.md   ← Seek hit the wrong player (fixed)
 └── 05-reference/                 ← Decode reports, API contracts (see README there)
 ```
 

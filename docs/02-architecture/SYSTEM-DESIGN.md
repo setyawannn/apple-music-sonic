@@ -17,7 +17,7 @@
                            │  invoke() / listen()
 ┌──────────────────────────▼──────────────────────────────────────────┐
 │ Tauri command layer — src-tauri/src/lib.rs                            │
-│   48 commands, window lifecycle, event emit                          │
+│   47 commands, window lifecycle, event emit                          │
 └──────┬───────────────────┬──────────────────────┬───────────────────┘
        │                   │                      │
 ┌──────▼──────┐   ┌────────▼─────────┐   ┌────────▼──────────────────┐
@@ -53,20 +53,24 @@ state = {
   playback: { isPlaying, currentTrackId, duration, position, volume,
               isShuffle, repeatMode },                   // PARKED local player
   streamingActive, streamIsPlaying, streamPosition,
-  streamDuration, streamAnchor                            // hidden player (optimistic)
+  streamDuration, streamAnchor       // hidden player (re-anchored from real reports)
 }
 ```
 
 `syncPlaybackStatus()` runs every 250 ms. If `streamingActive` it takes the streaming branch
-and returns; otherwise it polls `get_playback_status` from the parked local engine. That
-fork is a known design wart and disappears when the streaming state channel lands.
+and returns; otherwise it polls `get_playback_status` from the parked local engine. The
+streaming branch's numbers now come from the `player-state` event (cookie channel), and
+`streamAnchor` is re-set on every report, so the local clock only smooths gaps between them.
+The local fork remains a wart until P2 stops routing UI into the parked engine.
 
 ## Data flow (current)
 
 | User action | Path |
 |-------------|------|
 | Click catalog song | optimistic state → `invoke("stream_play")` → `player_command` → JS queue → MusicKit |
+| Play/pause reflect | page `publish()` → `mk_state` cookie → `start_state_poller` → `emit("player-state")` |
 | Click play/pause | `stream_pause` / `stream_resume` (or local commands when the local engine owns playback) |
+| Seek | progress bar → `stream_seek` → `seekToTime()` |
 | Search | `invoke("search_catalog")` → `amp-api.music.apple.com` |
 | Load Listen Now | `get_recommendations` |
 | Load Browse | `get_charts` |
@@ -76,16 +80,17 @@ fork is a known design wart and disappears when the streaming state channel land
 
 ### Not wired yet (backend exists)
 
-`get_personal_library` · `get_catalog_album` · `sync_cloud_library` · `stream_seek` ·
-`stream_stop` — see `docs/03-implementation/02-WHATS-MISSING.md`.
+`get_personal_library` · `get_catalog_album` · `sync_cloud_library` — see
+`docs/03-implementation/02-WHATS-MISSING.md`. Transport (next/prev/shuffle/repeat) is the P1
+work and does not have backend commands yet either.
 
 ## Concurrency model
 
 - Tauri commands run on the async runtime (Tokio) or on a blocking thread for pure sync work.
 - `AppState` holds `Mutex<library::Library>` and an `audio::Engine`; the streaming path does
   not touch either.
-- The state listener runs its own Tokio task accepting TCP connections on `127.0.0.1:38471`,
-  spawning one task per request.
+- `start_state_poller` runs one Tokio task that polls `window.cookies()` every 250 ms and
+  emits `player-state`. There is no inbound port any more.
 - The hidden player is driven with `webview.eval()`. There is no shared lock between the
   player and the local engine.
 
@@ -101,6 +106,9 @@ fork is a known design wart and disappears when the streaming state channel land
    still waking up.
 6. **Frontend-driven rendering.** Rust is a command backend; no SSR, no framework.
 7. **Park, don't delete, local playback.** Keeps the build green and the decision reversible.
+8. **State out of the page via cookie.** CSP blocks loopback `fetch`; WebView2 does not mirror
+   `document.title`. A first-party cookie polled by Rust is the only route that actually
+   works — and it needs no new dependency or capability.
 
 ## Boundaries and permissions
 
@@ -108,7 +116,7 @@ fork is a known design wart and disappears when the streaming state channel land
 |----------|------|
 | Main window | local page; CSP relaxed to `null` |
 | Hidden player | remote origin `https://music.apple.com/*`; needs `capabilities/player.json` |
-| Loopback state port | `127.0.0.1:38471`, local only, unauthenticated by design |
+| Player state | `mk_state` cookie (first-party, Secure, max-age 300 s); polled every 250 ms |
 | Secrets on disk | `%APPDATA%\AppleMusicRS\session.json`; never committed |
 | WebView2 profile | `%LOCALAPPDATA%\com.applemusicrs.desktop\auth_profile` |
 
@@ -121,7 +129,8 @@ fork is a known design wart and disappears when the streaming state channel land
 | RAM playing | 60–100 MB | **not measured** |
 | Startup | <1 s | not measured |
 | First-click audio | instant | ~4–6 s on a cold player, faster after pre-warm |
-| Time to truthful UI | — | **not achieved** (state channel dead) |
+| Command latency | <100 ms | `stream_play` returns immediately after `eval`; audio starts when MusicKit loads |
+| State freshness | ≤500 ms | page publishes every 500 ms + on events; Rust polls every 250 ms |
 
 Do not repeat the old "5–7× less memory than the official app" claim without measuring it.
 That number came from a native-decoder design that was never built.

@@ -4,50 +4,41 @@
 > **Scope: clone Apple Music only.** Local file playback is parked
 > (`04-PARKED-LOCAL-PLAYBACK.md`) — not on this list, not being deleted.
 
-Each item names the file to touch and the definition of done. Work top to bottom; P0 items
-are prerequisites for testing anything below them.
+Each item names the file to touch and the definition of done. Work top to bottom.
 
 ---
 
-## P0 — Make playback truthful
+## P0 — Make playback truthful — ✅ DONE (2026-11-13)
 
-### P0.1 Stop waiting on a signal that never arrives
-**File:** `src-tauri/src/lib.rs` (`player_command`)
-- Dispatch the job and return `Ok(())` immediately.
-- Remove the `PLAYER_READY` wait and the 30 s timeout, or keep them as pure observation with
-  no `Err` path.
-- Keep `PLAYER_READY` / `/ready` if useful for logging, but never block on it.
+### P0.1 Stop waiting on a signal that never arrives — ✅
+`player_command` dispatches the job and returns `Ok(())`. The `PLAYER_READY` wait and the
+30 s timeout are gone. Verified: `stream_play` resolves immediately and the icon no longer
+snaps back.
 
-**Done when:** `stream_play` resolves in milliseconds and the optimistic UI state is never
-reset by a timeout.
+### P0.2 Give the player a CSP-proof state channel — ✅
+The title channel was tried and **failed** (WebView2 does not mirror `document.title`). The
+cookie channel works: the page writes `mk_state`, `start_state_poller` reads
+`window.cookies()` every 250 ms and emits `player-state`. Verified live — real position,
+duration, title, artist, artwork.
 
-### P0.2 Give the player a CSP-proof state channel
-**Files:** `lib.rs` (`PLAYER_BOOTSTRAP`, `start_state_listener`), `src/js/app.js`
-- In the bootstrap, write state to `document.title` on transitions and on a 250–500 ms tick:
-  `{playing, position, duration, id, title, artist, artwork}`.
-- In Rust, poll `webview.title()` on a 250 ms task, dedupe by value, emit `player-state`.
-- Frontend listener already exists (`app.js:186-219`) and needs no change if the payload
-  shape is preserved.
-- Keep the TCP listener temporarily for debugging, then delete it and the `/debug` probe loop.
+### P0.3 Wire seek to the streaming player — ✅
+`app.js` branches on `state.streamingActive` → `stream_seek`, re-anchors `streamAnchor`,
+updates the fill. Ignored when duration is unknown instead of snapping to 0.
 
-**Done when:** the playback bar shows the player's real position and duration, artwork and
-title come from the page, and pausing updates the icon without a click.
+### P0.4 Remove the dead-player probes — ✅
+Loopback listener, `/debug` handler, probe loop, `probe_report` (48 → 47 commands),
+`PLAYER_READY`, `PLAYER_STATE_PORT`, and the `player_probe` capability entry are all gone.
 
-### P0.3 Wire seek to the streaming player
-**File:** `src/js/app.js` (`progressBar` handler)
-- If `state.streamingActive`: `invoke("stream_seek", { position })`, set
-  `streamPosition`, re-anchor `streamAnchor`, update the fill.
-- Otherwise keep the existing `seek_to` path (dormant local engine).
+### P0.5 Auth profile lifecycle — ✅
+`start_apple_sign_in` closes the `player` window, waits for the profile lock to release,
+wipes the profile, and re-warms the player after success.
 
-**Done when:** clicking the bar mid-stream jumps the audio and the bar stays where you put it.
-
-### P0.4 Remove the dead-player probes
-**File:** `lib.rs`
-- Delete the 5-second `probe_*` loop and the `/debug` handler once P0.2 lands.
+**Outcome:** the playback bar now reports the player's own state. This is the foundation P1
+and P2 build on.
 
 ---
 
-## P1 — Real transport
+## P1 — Real transport (next)
 
 ### P1.1 Queue model
 Decide and implement one of:
@@ -55,14 +46,17 @@ Decide and implement one of:
   then `skipToNextItem` / `skipToPreviousItem`.
 - **B.** One song at a time, with Rust computing neighbours from the current view.
 
-A is less code and matches Apple's semantics; recommend A.
+A is less code and matches Apple's semantics; recommend A. It also gives next/prev something
+real to skip within, which a single-song queue does not.
 
 ### P1.2 New commands + bootstrap branches
-`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, plus matching
-`__mkDo` cases (`skipToNextItem`, `skipToPreviousItem`, `m.shuffleMode`, `m.repeatMode`).
+`stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, plus matching `__mkDo`
+cases (`skipToNextItem`, `skipToPreviousItem`, `m.shuffleMode`, `m.repeatMode`).
 
-**Done when:** next/prev/shuffle/repeat work while streaming and the shuffle/repeat buttons
-reflect the player's state.
+Reflect the result: `publish()` should also report `shuffleMode` and `repeatMode` so the
+buttons show the player's state instead of a local guess.
+
+**Done when:** next/prev/shuffle/repeat work while streaming and the buttons stay in sync.
 
 ### P1.3 Stop
 Wire a stop control to `stream_stop`, then clear streaming state in the frontend.
@@ -77,7 +71,8 @@ client-side or with a small backend grouping. Do not delete the parked renderers
 
 ### P2.2 Album detail view
 New view driven by `get_catalog_album`: artwork, metadata, track list, play-all, per-track
-play. Clicking an album card anywhere opens it.
+play. Clicking an album card anywhere opens it. Play-all is the natural first consumer of the
+P1.1 queue.
 
 ### P2.3 Cloud playlists
 `get_cloud_playlists` with artwork → open → `get_cloud_playlist_tracks` → play. Decide the
@@ -92,8 +87,8 @@ parked code path, not the main flow.
 ## P3 — Polish
 
 - Transport state machine: idle / loading / playing / paused / error, with a visible
-  "buffering" state (depends on P0.2).
-- Non-256 kbps / unavailable track errors surfaced in the UI, not just `console.error`.
+  "buffering" state. Real state is now available, so this is finally possible.
+- Unavailable-track errors surfaced in the UI, not just `console.error`.
 - Restore last track, position, and volume on launch.
 - Space to play/pause, arrows to seek, Windows media keys.
 - Now Playing view and a queue drawer.
@@ -111,6 +106,9 @@ Only after P0–P3: develop local file playback, or delete it. Both paths are wr
 
 - Never route new UI into `scan_library` / `play_track` / `seek_to`.
 - Never extend `drm/**`.
+- Never add a playback readiness handshake; the page queue already orders commands.
+- Never use loopback `fetch` or `document.title` for state — both are proven dead. Use the
+  `mk_state` cookie.
 - Run `cargo check --no-default-features` after every `lib.rs` change.
 - One player, one state source. If a change needs a second source of truth, stop and fix the
   first one.

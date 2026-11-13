@@ -65,9 +65,9 @@ decoder, and EME output cannot be read as PCM). Lossless is out of reach on this
 | Play / pause / resume | ✅ works |
 | Browse: recommendations, charts | ✅ works |
 | Search + typeahead | ✅ works |
-| Seek while streaming | ❌ backend exists, UI never calls it |
-| Next / prev / shuffle / repeat while streaming | ❌ not implemented for MusicKit |
-| Truthful progress / duration / now-playing state | ❌ state channel is dead (CSP) |
+| Seek while streaming | ✅ works |
+| Truthful progress / duration / now-playing state | ✅ works (cookie channel) |
+| Next / prev / shuffle / repeat while streaming | ❌ not implemented for MusicKit (P1) |
 | Album detail | ❌ backend exists, no UI |
 | Your Library = iCloud library | ❌ backend exists, no UI |
 | Cloud playlists | ⚠️ partial |
@@ -81,13 +81,15 @@ Details and file-level evidence: `docs/03-implementation/01-WHATS-DONE.md` and
 
 ## The plan
 
-**P0 — Make playback truthful.**
-Stop waiting on a readiness signal that can never arrive; give the player a state channel
-that CSP cannot block; wire seek into the progress bar. Until this lands, the UI is guessing.
+**P0 — Make playback truthful. ✅ DONE (2026-11-13).**
+The readiness wait is gone; commands return immediately. State now leaves the player page
+through a first-party cookie (`mk_state`) that Rust polls every 250 ms — CSP cannot block it,
+and the `document.title` route was measured and rejected. Seek is wired to `stream_seek`.
 
-**P1 — Real transport.**
+**P1 — Real transport. (next)**
 Drive MusicKit's own queue: next, previous, shuffle, repeat, stop. Today those buttons call
-the parked local engine and do nothing while streaming.
+the parked local engine and do nothing while streaming. Requires a real queue
+(`setQueue({ songs: [...] })`) — a single-song queue has nothing to skip to.
 
 **P2 — Surface the Apple library.**
 "Library" tab reads the iCloud library, "Playlists" reads cloud playlists, album cards open

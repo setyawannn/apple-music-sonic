@@ -44,30 +44,29 @@ Three paths exist, in order of convenience:
    it to `%APPDATA%\AppleMusicRS\session.json`.
 3. **Set session token manually** — `set_user_session` with a Music-User-Token string.
 
-Note: the sign-in flow deletes the shared `auth_profile` directory before opening the login
-window. The hidden player uses that same directory, so **restart the app after signing in**
-until `docs/04-bugs/03-PLAYER-STATE-CHANNEL.md` is fixed.
+Note: the sign-in flow closes the hidden player and deletes the shared `auth_profile`
+directory before opening the login window, then re-warms the player on success. No restart is
+needed.
 
 ## Using the app
 
 1. Sign in (above). `Listen Now` populates from your recommendations.
 2. **Search** the catalog; results render as track rows and album cards.
 3. Click a song → full song streams through the hidden player.
-4. The playback bar's play/pause toggles the stream.
+4. The playback bar shows the player's own position and duration; play/pause, mute, and
+   seeking all work while streaming.
 
 ### What you can expect to be rough
 
-- **Progress is a local clock, not the player's clock.** The page's CSP blocks the loopback
-  state channel, so position/duration come from catalog metadata + elapsed time.
-- **Seeking does nothing while streaming.** The progress bar still calls the local engine.
 - **Next / previous / shuffle / repeat do nothing while streaming.** They call the parked
-  local engine.
-- **The playback icon can revert ~30 s after you press play.** `stream_play` waits 30 s for a
-  readiness signal that never arrives, then rejects, and the frontend resets its optimistic
-  state. Audio keeps playing.
+  local engine. This is the P1 work item.
+- **The playback bar lags reality by up to ~500 ms.** The player publishes state twice a
+  second plus on events; the frontend smooths between reports.
+- **Album cards and the Library/Playlists tabs read the parked local database**, not your
+  iCloud library. Backend commands exist; the UI is P2 work.
 - **Ceiling is AAC 256 kbps.** Lossless is not reachable through WebView2.
 
-All of the above are tracked in `docs/04-bugs/` and `docs/03-implementation/02-WHATS-MISSING.md`.
+All of the above are tracked in `docs/03-implementation/02-WHATS-MISSING.md`.
 
 ## Running tests
 
@@ -84,11 +83,11 @@ cargo test --no-default-features --test ffi_acceptance_tests
 
 `--no-default-features` matches how the dev server and release build are configured.
 
-**Verified 2026-11-13: 128 tests pass, 0 fail.**
+**Verified 2026-11-13: 130 tests pass, 0 fail.**
 
 | Suite | Tests |
 |-------|-------|
-| Unit tests (`src/`, in-module) | 48 |
+| Unit tests (`src/`, in-module) | 50 |
 | `api_acceptance_tests` | 16 |
 | `audio_acceptance_tests` | 16 |
 | `ffi_acceptance_tests` | 16 |
@@ -96,24 +95,26 @@ cargo test --no-default-features --test ffi_acceptance_tests
 | `streaming_acceptance_tests` | 16 |
 
 **Read this before trusting the green.** No test covers the shipped streaming path: the
-hidden WebView2 player, the JS command queue, the loopback state channel, or the frontend.
+hidden WebView2 player, the JS command queue, the cookie state poller, or the frontend.
 The suites verify data models, parsers, the parked local engine, the abandoned FFI bindings,
-and helper logic. `ffi_acceptance_tests` passing says the DLL bindings resolve — not that
-decryption works, because it never did. Treat a green run as "nothing structurally broken",
-not as "playback works".
+and helper logic (including the percent-decoder used by the state channel).
+`ffi_acceptance_tests` passing says the DLL bindings resolve — not that decryption works,
+because it never did. Treat a green run as "nothing structurally broken", not as "playback
+works". Verify streaming from a dev run instead: `[PLAYER] state {...}` lines mean the
+channel is alive.
 
 Note: PowerShell reports `Exit code: 1` for these runs because cargo writes progress to
-stderr. Judge by the `test result:` lines.
+stderr. Judge by the `test result:` lines. `ffi_acceptance_tests` can fail while another
+build or app instance is staging the same DLLs into `%LOCALAPPDATA%\bridge`; re-run it.
 
 ## Troubleshooting
 
 | Symptom | Likely cause / action |
 |---------|----------------------|
 | Window never appears | Known and fixed historically — see `docs/04-bugs/02-WINDOW-INIT-FIX.md`. Confirm the setup hook still calls `show()` + `set_focus()`. |
-| Audio plays, UI says nothing | Expected until the state channel is fixed. See bug 03. |
-| Play icon flips back after ~30 s | Expected — the 30 s ready-wait rejects. See bug 03. |
-| `state listener bind failed on 38471` | Another instance is running. Kill `app.exe` and relaunch. |
-| Nothing plays, no error | The hidden player is not signed in. Restart the app after signing in. |
+| Audio plays, UI says nothing | The player is not signed in, so `publish()` has no `nowPlayingItem`. Sign in; the player is rebuilt on success. |
+| UI updates then freezes | Check the log for `[PLAYER] state` lines. None means the cookie is not arriving — confirm `mk_state` is written and that the poller is running. |
+| Nothing plays, no error | The hidden player is not signed in. Sign in again (no restart needed). |
 | `401 Unauthorized` from the API | Music-User-Token expired. Sign in again. |
 
 ## Project commands

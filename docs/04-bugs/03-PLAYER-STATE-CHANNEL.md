@@ -1,91 +1,86 @@
-# Bug 03 — The player state channel is dead, and every command hangs 30 s
+# Bug 03 — The player state channel was dead, and every command hung 30 s
 
-> **Status: OPEN — P0, blocking all playback UI work**
-> Found: 2026-11-13 · Affects: `stream_play`, `stream_pause`, `stream_resume`, `stream_seek`,
-> the playback bar, the transfer of now-playing metadata
+> **Status: FIXED & VERIFIED ✅** — 2026-11-13
+> Affected: `stream_play`, `stream_pause`, `stream_resume`, `stream_seek`, the playback bar,
+> now-playing metadata.
+> Fixed in: `src-tauri/src/lib.rs` (`player_command`, `PLAYER_BOOTSTRAP`,
+> `start_state_poller`), `src/js/app.js` (progress-bar seek).
 
 ---
 
-## Summary
+## What was broken
 
-`music.apple.com`'s Content-Security-Policy blocks the page's `fetch()` calls to
-`http://127.0.0.1:38471`. The loopback listener therefore **never receives a single request**,
-which means:
+Two separate faults, stacked:
 
-- `PLAYER_READY` is permanently `false`
-- every `player_command` waits 30 s and then returns `Err`
-- the frontend resets its optimistic playback state when that error lands
-- position, duration, title, artist, and artwork from the player are unavailable
+1. **The state channel could never work.** `PLAYER_BOOTSTRAP` POSTed player state to
+   `http://127.0.0.1:38471`. `music.apple.com`'s CSP `connect-src` blocks that before it
+   leaves the page, so the listener received **zero** packets across every recorded run.
+2. **Every command waited on that channel.** `player_command` blocked up to 30 s on a
+   `/ready` signal the page could not send, then returned `Err`. The frontend's `catch`
+   reset its optimistic state, so the play icon flipped back even though audio was playing.
 
-Audio still plays, because the page-side command queue executes independently of the channel.
+## Evidence it was dead (pre-fix)
 
-## Evidence
-
-Server binds on every launch:
+Server bound on every launch, and no request ever arrived:
 
 ```
 [PLAYER] state listener on 127.0.0.1:38471        (× 6 launches)
-```
-
-Grep for any received request across the recorded session log:
-
-```
 $ Select-String dev-run.log -Pattern '\[PLAYER\] (ready|state|debug)'
 (no matches)
 ```
 
-Six launches, three request types, zero packets. The bootstrap's `fetch(..., { mode: 'no-cors' })`
-does not help: `mode` governs CORS, not CSP. `connect-src` rejects the request before the
-network stack sees it.
+`mode: 'no-cors'` does not help: `mode` governs CORS, not CSP.
 
-Command log shows the hang in practice:
+## Fix, part 1 — delete the readiness wait
 
-```
-[PLAYER] cmd=play   has_arg=true nonce=1794310356397   ← 11:32:33
-[PLAYER] cmd=pause  ...                                ← 11:32:47  (user clicked)
-```
-
-`stream_play` never logged completion; the promise was still pending when the user paused.
-
-## Consequences, precisely
-
-| # | Effect | User-visible |
-|---|--------|--------------|
-| 1 | `stream_play` rejects after 30 s | Console error only, then… |
-| 2 | frontend `catch` sets `streamingActive = false` | icon flips to ▶, badge/progress revert |
-| 3 | `player-state` listener never fires | progress is `Date.now()` arithmetic |
-| 4 | duration comes from catalog `duration_ms` | wrong for tracks with a different master length |
-| 5 | no real `nowPlayingItem` | title/artist/artwork are whatever was clicked, not what Apple is playing |
-
-## Fix
-
-### Step 1 — delete the readiness wait (immediate, independent)
+`player_command` now dispatches the job and returns immediately:
 
 ```rust
-// player_command, after a successful dispatch
-return Ok(());               // the page queue guarantees ordering
+window.eval(&js).map_err(|e| e.to_string())?;
+println!("[PLAYER] cmd={} nonce={}", cmd, nonce);
+Ok(())
 ```
 
-Remove the `PLAYER_READY` load/timeout branch. Keep the flag only if you want it for logs.
-This alone removes the 30 s hang and the icon reset.
+The page owns ordering (`window.__mkQueue` + `__mkDrain`), so a command issued before
+MusicKit is live is parked and executed when it loads. There is no handshake, no timeout, no
+retry, and re-introducing one would be a regression.
 
-### Step 2 — a channel CSP cannot block
+Removed with it: `PLAYER_READY`, `PLAYER_READY_SIGNAL`, `player_ready_signal()`,
+`PLAYER_STATE_PORT`, `LAST_PLAYER_STATE`, the TCP listener, the `/debug` handler, the 5 s
+probe loop, and the `probe_report` command (48 → 47 commands).
 
-Write state into the document title and let Rust read it:
+## Fix, part 2 — a channel CSP cannot block
+
+**Title channel was tried first and failed.** The plan was to write JSON into
+`document.title` and poll `WebviewWindow::title()`. Measured result:
+
+```
+[TITLE] "Apple Music Player"      ← never changed, over a full song
+```
+
+WebView2 does not mirror `document.title` to the native window title. Do not retry it.
+
+**Cookie channel works.** `document.cookie` is first-party, CSP-immune, and
+`window.cookies()` is the same API the sign-in flow already uses to read
+`media-user-token` — proven on this exact webview.
+
+Page side (`PLAYER_BOOTSTRAP`):
 
 ```js
-// PLAYER_BOOTSTRAP
 function publish() {
-  try {
-    var m = window.MusicKit.getInstance();
-    var item = m.nowPlayingItem || null, a = (item && item.attributes) || null;
-    document.title = JSON.stringify({
-      p: m.isPlaying ? 1 : 0, t: m.currentPlaybackTime || 0,
-      d: m.currentPlaybackDuration || 0, id: item && item.id,
-      n: a && a.name, ar: a && a.artistName,
-      w: a && a.artwork ? a.artwork.url : null
-    });
-  } catch (e) {}
+  var m = window.MusicKit.getInstance();
+  var item = m.nowPlayingItem || null, attrs = (item && item.attributes) || null;
+  var json = JSON.stringify({
+    isPlaying: !!m.isPlaying,
+    position: m.currentPlaybackTime || 0,
+    duration: m.currentPlaybackDuration || 0,
+    id: item && item.id ? item.id : null,
+    title: attrs ? attrs.name : null,
+    artist: attrs ? attrs.artistName : null,
+    artwork: attrs && attrs.artwork ? attrs.artwork.url : null
+  });
+  document.cookie = 'mk_state=' + encodeURIComponent(json) +
+                    '; path=/; max-age=300; Secure; SameSite=Lax';
 }
 window.__mkReady.then(function (m) {
   ['playbackStateDidChange','nowPlayingItemDidChange','playbackTimeDidChange']
@@ -95,51 +90,51 @@ window.__mkReady.then(function (m) {
 });
 ```
 
+Rust side (`start_state_poller`, 250 ms):
+
 ```rust
-// Rust: poll the window title, dedupe, emit
-tauri::async_runtime::spawn(async move {
-    let mut last = String::new();
-    loop {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        let Some(w) = app.get_webview_window("player") else { continue };
-        let Ok(t) = w.title() else { continue };
-        if t != last && t.starts_with('{') { last = t.clone(); let _ = app.emit("player-state", t); }
-    }
-});
+let jar = window.cookies()?;
+let raw = jar.iter().find(|c| c.name() == "mk_state").map(|c| c.value())?;
+let json = if raw.starts_with('{') { raw.to_string() } else { percent_decode(raw) };
+if json == last || serde_json::from_str::<Value>(&json).is_err() { continue; }
+last = json.clone();
+app.emit("player-state", json);
 ```
 
-Notes:
-- `document.title` is not subject to CSP and is a native WebView2 property — no bridge needed.
-- WebView2 reflects title changes to `WebViewWindow::title()`.
-- Keep the JSON compact (title strings are short).
-- The existing `app.js` listener already parses JSON payloads, so no frontend change is
-  required if the field names are mapped to `payload.isPlaying`, `position`, `duration`,
-  `id`, `title`, `artist`, `artwork`.
+Notes that matter:
 
-**Alternative considered:** `window.ipc.postMessage` into Tauri's IPC internals. Works, but
-depends on internal message formats and needs capability changes; the title channel is
-smaller and has no version risk.
+- WebView2 may return the cookie already decoded or still percent-encoded; both are accepted,
+  because encoding a `%` again would corrupt valid JSON.
+- Dedupe is by full string, so position advances emit ~2/s and a paused player emits nothing.
+- The payload keys are unchanged, so `app.js`'s existing listener needed no edit.
 
-### Step 3 — remove the corpse
+## Verified
 
-Once step 2 is verified for a full listening session, delete:
-- the TCP listener (`start_state_listener`) or keep it local-only for debugging,
-- the `/debug` probe loop and `probe_report`,
-- the `setInterval(report, 250)` `fetch` path in the bootstrap.
+Live from a dev run after the fix:
 
-## Secondary issue in the same area
+```
+[PLAYER] state {"isPlaying":true,"position":17,"duration":155,"id":"6812102720",
+                "title":"hang up","artist":"Kendis","artwork":"https://is1-ssl.mzstatic.com/..."}
+[PLAYER] state {"isPlaying":true,"position":18,...}
+```
 
-`start_apple_sign_in` deletes the shared `auth_profile` directory
-(`lib.rs:591-597`) while the hidden player is running on it, and never closes or reloads the
-player. After signing in, the player can hold a wiped profile.
+- Real position, real duration (155 s), title/artist/artwork from `nowPlayingItem`.
+- `stream_play` resolves in milliseconds; the icon no longer snaps back after 30 s.
 
-**Fix:** before wiping, close the `player` window; after a successful sign-in, let
-`ensure_player()` rebuild it on demand. One line each, but it must not be forgotten.
+## Secondary issue fixed in the same pass
 
-## Acceptance criteria
+`start_apple_sign_in` deleted the shared `auth_profile` directory while the hidden player was
+running on it, and never closed or reloaded the player — so signing in left the player holding
+a wiped session until restart. It now:
 
-1. `stream_play` resolves in < 100 ms and never rejects on a timeout.
-2. Play/pause updates the icon without a click, within ~500 ms.
-3. Position advances from the player's own clock; pausing freezes it.
-4. Resume from a paused state continues at the correct offset.
-5. Nothing regresses when the player is closed and reopened.
+1. closes the `player` window before wiping,
+2. waits up to ~1 s for WebView2 to release the profile lock,
+3. calls `ensure_player()` after a successful sign-in to re-warm it.
+
+## Regression guards
+
+- `stream_play` must resolve fast and never reject on a timeout.
+- Play/pause updates the icon without a click, within ~500 ms.
+- Position advances from the player's own clock; pausing freezes it.
+- Nothing breaks when the player is closed and rebuilt.
+- Do not add a readiness handshake. Do not use `document.title`. Do not use loopback `fetch`.

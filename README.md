@@ -17,10 +17,10 @@ matches what the player is actually doing.
 |------|-------|
 | Apple ID sign-in ($0, web token + cookie capture) | ✅ works |
 | Full-song playback (hidden MusicKit player + Windows PlayReady) | ✅ works |
-| Play / pause / resume | ✅ works |
+| Play / pause / resume / seek | ✅ works |
+| Truthful progress, duration, now-playing metadata | ✅ works |
 | Browse: Listen Now, Charts, Search + typeahead | ✅ works |
-| Seek, next/prev, shuffle, repeat while streaming | 🚧 in progress |
-| Truthful progress / duration / now-playing | 🚧 in progress |
+| Next / previous / shuffle / repeat while streaming | 🚧 next up (needs a MusicKit queue) |
 | Album detail, iCloud library views | 🚧 backend ready, UI pending |
 | Local file playback | ⏸ parked — see `docs/03-implementation/04-PARKED-LOCAL-PLAYBACK.md` |
 | Lossless / Atmos | ⛔ out of reach on this architecture (AAC 256 ceiling) |
@@ -36,11 +36,14 @@ CDM. So the app does not try to decrypt anything. It hosts Apple's own MusicKit 
 and lets the **PlayReady CDM** that ships with Windows handle the rest.
 
 ```
-click a song → invoke("stream_play") → hidden webview → MusicKit.play() → PlayReady → audio
+play:  click a song → invoke("stream_play") → hidden webview → MusicKit.play() → PlayReady → audio
+state: page → document.cookie("mk_state") → Rust polls the cookie jar → "player-state" event → UI
 ```
 
-Every playback command is queued inside the page and carries a nonce, so a click that arrives
-before MusicKit has loaded still runs, exactly once.
+Commands are queued inside the page and carry a nonce, so a click that arrives before MusicKit
+has loaded still runs, exactly once — and no command ever waits for a readiness handshake.
+State comes back through a cookie because the page's CSP blocks loopback HTTP and WebView2 does
+not mirror `document.title`.
 
 ## Requirements
 
@@ -64,7 +67,7 @@ Production binary: `src-tauri/target/release/app.exe` (~20 MB).
 index.html                  UI shell (sidebar, main view, playback bar)
 src/js/app.js               UI logic and Tauri command calls
 src/styles/app.css          Apple-style dark theme
-src-tauri/src/lib.rs        48 Tauri commands, hidden player, auth, lifecycle
+src-tauri/src/lib.rs        47 Tauri commands, hidden player, cookie state poller, auth, lifecycle
 src-tauri/src/api/          REST client, auth, session import
 src-tauri/src/audio/        parked local engine (symphonia + rodio)
 src-tauri/src/library/      parked local library (SQLite)

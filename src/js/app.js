@@ -56,6 +56,9 @@ const state = {
   openPlaylistId: null,
   playlistTracks: [],
   playlistTrackSig: null,
+  // Last artwork URL painted into the now-playing bar, so we never re-create the
+  // <img> (which made it flicker) on every once-a-second state tick.
+  streamArtworkUrl: null,
 };
 
 // ─── DOM References ────────────────────────────────────────────
@@ -103,6 +106,7 @@ document.querySelector(".sidebar-nav.library-nav")?.addEventListener("click", (e
   if (!view) return;
 
   state.currentView = view;
+  state.openPlaylistId = null;
   navItems.forEach((n) => n.classList.remove("active"));
   item.classList.add("active");
 
@@ -129,6 +133,7 @@ document.querySelectorAll(".sidebar-nav:not(.library-nav) .nav-item").forEach((i
   item.addEventListener("click", () => {
     const view = item.dataset.view;
     state.currentView = view;
+    state.openPlaylistId = null;
     navItems.forEach((n) => n.classList.remove("active"));
     item.classList.add("active");
 
@@ -192,7 +197,10 @@ async function syncCloudPlaylists() {
     if (Array.isArray(playlists)) {
       state.cloudPlaylists = playlists;
       renderSidebarPlaylists();
-      if (state.currentView === "playlists") {
+      // Repaint the list only when the list is actually on screen. If a playlist
+      // detail is open, leave it alone — re-rendering here would yank the user out
+      // of the playlist (and flicker their list) on every focus/auto-sync.
+      if (state.currentView === "playlists" && !state.openPlaylistId) {
         renderPlaylists();
       }
     }
@@ -270,10 +278,16 @@ try {
     }
 
     if (payload.artwork) {
-      const artImg = $("#now-playing-art");
       const formatted = payload.artwork.replace("{w}", "100").replace("{h}", "100").replace("{f}", "jpg");
-      if (artImg) {
-        artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
+      // Rebuild the <img> only when the artwork actually changes. Re-setting
+      // innerHTML on every state tick (once a second while playing) made the
+      // now-playing art flicker.
+      if (formatted !== state.streamArtworkUrl) {
+        state.streamArtworkUrl = formatted;
+        const artImg = $("#now-playing-art");
+        if (artImg) {
+          artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
+        }
       }
     }
 
@@ -1133,6 +1147,14 @@ function renderPlaylistTracks(tracks) {
         <div class="empty-state-title">Empty Playlist</div>
         <div class="empty-state-desc">Search or browse, then use the + on a song to add it here.</div>
       </div>`;
+
+  // Re-apply the "now playing" highlight immediately, so a repaint never blanks it.
+  host.querySelectorAll(".track-item.stream-track").forEach((el) => {
+    el.classList.toggle(
+      "playing",
+      !!state.streamCurrentId && el.dataset.catalogId === state.streamCurrentId
+    );
+  });
 }
 
 /// Re-fetch the open playlist and repaint only if its contents changed. Safe to
@@ -1265,6 +1287,7 @@ function optimisticallyPlay(song, queueLength) {
   if (song.artwork_url) {
     const artImg = $("#now-playing-art");
     const formatted = song.artwork_url.replace("{w}", "100").replace("{h}", "100").replace("{f}", "jpg");
+    state.streamArtworkUrl = formatted;
     if (artImg) {
       artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
     }
@@ -2336,6 +2359,7 @@ function paintRestoredBar(last) {
   if (last.artwork) {
     const artImg = $("#now-playing-art");
     const formatted = last.artwork.replace("{w}", "100").replace("{h}", "100").replace("{f}", "jpg");
+    state.streamArtworkUrl = formatted;
     if (artImg) {
       artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
     }
@@ -2385,15 +2409,15 @@ async function resumeLastSession() {
 // ─── Init ──────────────────────────────────────────────────────
 window.scanLibrary = scanLibrary;
 
-// Auto-sync: playlists refresh on sign-in, on opening the view, and when the
-// window regains focus. There is no manual Sync button by design. An open
-// playlist also re-polls on a timer so edits made elsewhere show up.
+// Auto-sync is event-driven, never on a timer: the playlist list refreshes on
+// sign-in, on opening the Playlists view, and on window focus; an open playlist
+// re-checks on focus and right after you add a song. A periodic poll was removed
+// because it repainted the list under the user while a song was playing
+// (see docs/04-bugs/06-PLAYLIST-REFRESH-FLICKER.md).
 window.addEventListener("focus", () => {
   if (state.auth.isAuthenticated) syncCloudPlaylists();
   refreshOpenPlaylist();
 });
-
-setInterval(refreshOpenPlaylist, 30000);
 
 // Initial bootstrap
 checkAuthState().then(() => {

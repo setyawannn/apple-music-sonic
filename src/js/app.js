@@ -111,6 +111,7 @@ document.querySelector(".sidebar-nav.library-nav")?.addEventListener("click", (e
       break;
     case "playlists":
       renderPlaylists();
+      syncCloudPlaylists();
       break;
     case "artists":
       renderArtists();
@@ -193,6 +194,7 @@ async function syncCloudPlaylists() {
     }
   } catch (err) {
     console.warn("Cloud playlists sync:", err);
+    showToast(`Couldn't load your playlists: ${String(err)}`, "error");
   } finally {
     state.isSyncing = false;
   }
@@ -975,7 +977,6 @@ function renderPlaylists() {
 
   const toolbar = `
     <div style="display: flex; gap: 10px;">
-      <button class="welcome-action" id="sync-cloud-top-btn" style="margin: 0; padding: 8px 16px;">Sync</button>
       <button class="welcome-action" id="new-playlist-top-btn" style="margin: 0; padding: 8px 16px;">+ New Playlist</button>
     </div>`;
 
@@ -993,7 +994,6 @@ function renderPlaylists() {
     `;
     document.getElementById("create-first-playlist-btn")?.addEventListener("click", handleCreatePlaylist);
     document.getElementById("new-playlist-top-btn")?.addEventListener("click", handleCreatePlaylist);
-    document.getElementById("sync-cloud-top-btn")?.addEventListener("click", syncCloudPlaylists);
     return;
   }
 
@@ -1024,7 +1024,7 @@ function renderPlaylists() {
               }
             </div>
             <div class="album-card-title">${escapeHtml(cp.name)}</div>
-            <div class="album-card-artist">${cp.track_count || (cp.tracks ? cp.tracks.length : 0)} songs${cp.can_edit ? "" : ' · <span title="Not editable">🔒</span>'}</div>
+            <div class="album-card-artist">${cp.track_count ? `${cp.track_count} song${cp.track_count === 1 ? "" : "s"}` : "Playlist"}${cp.can_edit ? "" : ' · 🔒'}</div>
           </div>
         `;
         })
@@ -1032,7 +1032,6 @@ function renderPlaylists() {
     </div>
   `;
   document.getElementById("new-playlist-top-btn")?.addEventListener("click", handleCreatePlaylist);
-  document.getElementById("sync-cloud-top-btn")?.addEventListener("click", syncCloudPlaylists);
 }
 
 async function showCloudPlaylistDetail(playlistId) {
@@ -1633,7 +1632,7 @@ function openPlaylistPicker(trackIds) {
                      (p) => `
                    <div class="playlist-picker-item" data-pick="${p.id}">
                      <span class="playlist-picker-name">${escapeHtml(p.name)}</span>
-                     <span class="playlist-picker-count">${p.track_count || 0} songs</span>
+                     <span class="playlist-picker-count">${p.track_count ? `${p.track_count} songs` : ""}</span>
                    </div>`
                    )
                    .join("")}
@@ -2345,6 +2344,12 @@ async function resumeLastSession() {
 
 // ─── Init ──────────────────────────────────────────────────────
 window.scanLibrary = scanLibrary;
+
+// Auto-sync: playlists refresh on sign-in, on opening the view, and when the
+// window regains focus. There is no manual Sync button by design.
+window.addEventListener("focus", () => {
+  if (state.auth.isAuthenticated) syncCloudPlaylists();
+});
 
 // Initial bootstrap
 checkAuthState().then(() => {

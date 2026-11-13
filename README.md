@@ -22,7 +22,7 @@ matches what the player is actually doing.
 | Browse: Listen Now, Browse/Charts, Search + typeahead | ✅ works |
 | Next / previous / shuffle / repeat / volume while streaming | ✅ works (MusicKit owns the queue) |
 | Album detail (catalog + iCloud), iCloud library views | ✅ works |
-| Cloud playlists (read + create/rename/delete/add songs) | ✅ works |
+| Cloud playlists (read + create/rename/delete/add songs, auto-synced) | ✅ works |
 | Loading spinner, error toast, resume-on-launch | ✅ works |
 | Keyboard shortcuts (Space, arrows, `M`) | ✅ works |
 | Up Next queue drawer (click to jump) | ✅ works |

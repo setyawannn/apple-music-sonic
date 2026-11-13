@@ -1052,11 +1052,12 @@ async fn get_recommendations(state: State<'_, AppState>) -> Result<Vec<StoreAlbu
 
 #[tauri::command]
 async fn get_cloud_playlists(state: State<'_, AppState>) -> Result<Vec<CloudPlaylist>, String> {
-    state
-        .api_client
-        .get_user_playlists()
-        .await
-        .map_err(|e| e.to_string())
+    let result = state.api_client.get_user_playlists().await;
+    match &result {
+        Ok(list) => println!("[PLAYLIST] loaded {} playlists", list.len()),
+        Err(e) => eprintln!("[PLAYLIST] error: {}", e),
+    }
+    result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

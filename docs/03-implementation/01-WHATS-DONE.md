@@ -56,7 +56,7 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Charts | `get_charts` | ✅ Listen Now fallback + Browse |
 | Recommendations | `get_recommendations` | ✅ (Listen Now) |
 | Personal iCloud songs | `get_personal_library` | ✅ Library / Albums / Artists, preloaded at sign-in |
-| Cloud playlists (read) | `get_cloud_playlists` | ✅ Playlists tab + sidebar |
+| Cloud playlists (read) | `get_cloud_playlists` | ✅ Playlists tab + sidebar; auto-synced (no manual button). Note: must omit `include=tracks` (400) — see bug 05 |
 | Cloud playlist tracks | `get_cloud_playlist_tracks` | ✅ detail with Play/Shuffle, rows play via the queue |
 | Create / rename / delete playlist | `create_cloud_playlist`, `rename_cloud_playlist`, `delete_cloud_playlist` | ✅ writes to Apple Music (measured: 201/204/204) |
 | Add tracks to a playlist | `add_to_cloud_playlist` | ✅ `+` on any track row → picker (measured: 204) |

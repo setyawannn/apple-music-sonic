@@ -308,7 +308,11 @@ impl ApiClient {
         }
 
         let language = self.auth.language();
-        let url = format!("{}/v1/me/library/playlists?limit=100&l={}&include=tracks", self.base_url, language);
+        // No `include=tracks` here: Apple returns **400** for it on library playlists
+        // (measured; `include=trackCount` and `extend=tracks` are accepted but add nothing).
+        // Track counts are therefore absent from the list — tracks are fetched on demand by
+        // `get_playlist_tracks` when a playlist is opened.
+        let url = format!("{}/v1/me/library/playlists?limit=100&l={}", self.base_url, language);
 
         let response = self
             .http

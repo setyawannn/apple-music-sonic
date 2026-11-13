@@ -103,6 +103,11 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 - Playlists are the user's **Apple Music library playlists**, not the parked local SQLite ones.
   The write endpoints (`create/rename/delete/add-track`) live in `api/client.rs` and were
   measured against a live session:
+  - **Never add `include=tracks` to the list URL** — Apple returns **400** and the playlist list
+    silently comes back empty. Tracks are fetched on demand by `get_playlist_tracks`. The list
+    carries no `trackCount`, so the UI shows a count only when it knows one. Sync is automatic
+    (on sign-in, on opening the view, on window focus) — there is no Sync button by design.
+    See `docs/04-bugs/05-PLAYLIST-LIST-400.md`.
   - **Rename must NOT send `?l=`** (`PUT /v1/me/library/playlists/{id}` with a bare
     `{ "attributes": { "name" } }` body → 204). With the query param Apple returns **500**.
     Create / add-tracks / delete do take `?l=`.
@@ -157,7 +162,8 @@ docs/
 │   ├── 01-DELAYED-PLAY.md        ← Play delay: three timers, all fixed
 │   ├── 02-WINDOW-INIT-FIX.md     ← Blank-window fix (solved, historical)
 │   ├── 03-PLAYER-STATE-CHANNEL.md← Cookie state channel (fixed; CSP + title route dead)
-│   └── 04-PROGRESS-BAR-SEEK.md   ← Seek hit the wrong player (fixed)
+│   ├── 04-PROGRESS-BAR-SEEK.md   ← Seek hit the wrong player (fixed)
+│   └── 05-PLAYLIST-LIST-400.md   ← Playlists invisible: `include=tracks` → 400 (fixed)
 └── 05-reference/                 ← Decode reports, API contracts (see README there)
 ```
 

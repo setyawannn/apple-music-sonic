@@ -257,8 +257,11 @@ play icon flip back after 30 s. History and evidence: `docs/04-bugs/03-PLAYER-ST
 Playlists are the user's **Apple Music library playlists**. The local SQLite playlists
 (`library/**`) are parked and no longer reachable from the UI.
 
-Reading: `get_cloud_playlists` → `/v1/me/library/playlists`; opening one calls
-`get_cloud_playlist_tracks`. Rows play through the same MusicKit queue path as everything else.
+Reading: `get_cloud_playlists` → `/v1/me/library/playlists`. **Do not send `include=tracks`** —
+Apple returns 400 and the list comes back empty (see `docs/04-bugs/05-PLAYLIST-LIST-400.md`).
+Tracks are fetched on demand by `get_cloud_playlist_tracks` when a playlist is opened. Sync is
+automatic: on sign-in, on opening the Playlists view, and on window focus — there is no Sync
+button. `get_cloud_playlists` logs `[PLAYLIST] loaded N` so a failure can't hide again.
 
 Writing (all verified against a live session during a scratch create→add→rename→delete probe):
 

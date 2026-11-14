@@ -48,7 +48,11 @@ ships with WebView2 — handles FairPlay and decryption. We never touch cipherte
 
 Route B is why the app works today. The trade-off is honest: the hidden browser is heavier
 than a native decoder, and the ceiling is **AAC 256 kbps** (WebView2 exposes no ALAC
-decoder, and EME output cannot be read as PCM). Lossless is out of reach on this path.
+decoder, and EME output cannot be read as PCM). Lossless is out of reach on this path —
+measured both ways, not assumed: Apple ships an ALAC 24/44.1 rendition in `enhancedHls`, but
+`MediaSource.isTypeSupported('audio/mp4; codecs="alac"')` is `false` and PlayReady rejects an
+ALAC content type with `NotSupportedError`. See `docs/05-reference/04-AUDIO-QUALITY-CEILING.md`
+for the probe output and the real cost of the native alternative.
 
 ```diff
 - "Reverse engineer FairPlay"            (impossible, and not attempted)

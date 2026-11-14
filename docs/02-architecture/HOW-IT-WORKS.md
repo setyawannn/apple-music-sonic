@@ -141,18 +141,19 @@ So the app borrows one. Consequences, stated plainly:
 
 | Cost | Detail |
 |------|--------|
-| Audio ceiling | **AAC 256 kbps**. WebView2 exposes no ALAC decoder (`mse.alac = false`) and EME output cannot be read back as PCM, so "lossless" is unreachable on this path. |
+| Audio ceiling | **AAC 256 kbps**. WebView2 exposes no ALAC decoder (`mse.alac = false`) and EME output cannot be read back as PCM, so "lossless" is unreachable on this path. Apple *does* return an ALAC 24/44.1 rendition in `enhancedHls`, but both the MSE pipeline and the PlayReady session reject ALAC. Full evidence and the cost of the native alternative: `docs/05-reference/04-AUDIO-QUALITY-CEILING.md`. |
 | Memory | A hidden Chromium instance. The old "~80 MB total" target is **not measured** and should be treated as aspirational. |
 | State feedback | Works, but the only path out of the page is a cookie (CSP blocks fetch, WebView2 blocks the title route). See below. |
 | Startup | Mitigated by pre-warming the player during `setup()`. |
 
-Probe results recorded on this machine:
+Probe results recorded on this machine (re-measured 2026-11-14):
 
 ```
 com.microsoft.playready : ok / ok / ok      ← used
 com.widevine.alpha      : ok / NotSupportedError / ok
 com.apple.fps           : NotSupportedError ×3
 MSE                     : aac = true, alac = false, ec3 = false
+PlayReady + ALAC        : NotSupportedError  ← lossless is refused at the CDM, not just the demuxer
 ```
 
 ---

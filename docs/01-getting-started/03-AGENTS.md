@@ -68,6 +68,13 @@ player state (twice a second, plus on every player event)
 CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_status` and
 `run_native_bridge_diagnostics`.
 
+**Audio ceiling is AAC 256 kbps, and it is measured, not assumed.** Apple returns an ALAC
+24/44.1 rendition in `enhancedHls`, but WebView2 has no ALAC decoder
+(`MediaSource.isTypeSupported('audio/mp4; codecs="alac"') === false`) and PlayReady rejects an
+ALAC content type with `NotSupportedError`. EME never exposes keys or PCM, so an in-page WASM
+decoder cannot help. Do not promise lossless without reading
+`docs/05-reference/04-AUDIO-QUALITY-CEILING.md` first.
+
 ## Hard rules
 
 1. **$0.** No Apple Developer Program, no paid APIs, no paid services.
@@ -180,7 +187,7 @@ docs/
 │   ├── 05-PLAYLIST-LIST-400.md   ← Playlists invisible: `include=tracks` → 400 (fixed)
 │   ├── 06-AUTOREFRESH-FLICKER.md ← Timer repaint + artwork rebuild flickered playback (fixed)
 │   └── 07-SUBFRAME-STATE-FLICKER.md ← Bootstrap ran in every frame → empty state fights real (fixed)
-└── 05-reference/                 ← Decode reports, API contracts (see README there)
+└── 05-reference/                 ← Decode reports, API contracts, audio-quality ceiling (see README there)
 ```
 
 ## Build & verify

@@ -8,6 +8,7 @@ not for *what this app does* — the shipped architecture changed after they wer
 | `01-REA-DECODE.md` | 2026-11-09 | Historical. Describes the installed Apple Music package: DLLs, exports, ordinals, FFI surface. Useful if native decryption is ever revisited. |
 | `02-FULL-DECODE-REPORT.md` | 2026-11-09 | Historical. Broadest decode of the app package and its protocols. Same caveat. |
 | `03-API-CONTRACTS.md` | 2026-11-09 | **Current.** Live MusicKit/REST endpoints and payload shapes captured from the official client. This is still the reference for `src-tauri/src/api/client.rs`. |
+| `04-AUDIO-QUALITY-CEILING.md` | 2026-11-14 | **Current, measured.** Why the app streams AAC 256 and not lossless: the ALAC rendition Apple returns, and the two probes (MSE + PlayReady) that refuse it. Read before proposing any lossless work. |
 
 ## What changed since 2026-11-09
 

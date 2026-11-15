@@ -322,6 +322,13 @@ Two quirks are load-bearing and easy to regress:
 - **Track `type` depends on the id.** Catalog ids (numeric) use `type: "songs"`; the user's
   library songs (`i.` prefix) use `type: "library-songs"` — see `library_track_type`.
 
+A third one applies to every list read: **`limit` is a page size, not a result size.** Apple
+returns at most 100 items and hands out the rest through a `next` cursor. Reading a single
+response used to cut long playlists (and the whole iCloud library) at exactly 100 songs with no
+error. `ApiClient::fetch_all_pages` walks the cursor, falls back to `offset` when `next` is
+absent, and stops on a short page, a repeated page, or 200 pages. See
+`docs/04-bugs/08-PLAYLIST-PAGINATION.md`.
+
 **Remove-track is not supported** by this API: `DELETE …/tracks/{id}` and
 `…/relationships/tracks` both 404, on both hosts. The UI therefore does not offer it.
 
@@ -401,7 +408,7 @@ not part of the product.
 | `src-tauri/src/player/bootstrap.js` | 179 | `PLAYER_BOOTSTRAP`: queue + transport + publish + Up Next |
 | `src-tauri/src/player/cookie.rs` | 86 | percent/base64 codecs for the state channel |
 | `src-tauri/src/player/media.rs` | 266 | SMTC media keys + now-playing flyout |
-| `src-tauri/src/api/client.rs` | 620 | REST: search, suggestions, album, charts, library, playlists (read + create/rename/delete/add-tracks) |
+| `src-tauri/src/api/client.rs` | 739 | REST: search, suggestions, album, charts, library, playlists (read + create/rename/delete/add-tracks); `fetch_all_pages` paginator |
 | `src-tauri/src/api/local_session.rs` | 367 | WebView2 cookie import |
 | `src-tauri/src/api/auth.rs` | 155 | Developer token, session persistence, storefront |
 | `src-tauri/src/api/models.rs` | 90 | Store models |

@@ -121,6 +121,11 @@ decoder cannot help. Do not promise lossless without reading
     playlist re-checks on focus and after an add) — a periodic poll repainted the list under the
     user while playing. See `docs/04-bugs/05-PLAYLIST-LIST-400.md` and
     `06-AUTOREFRESH-FLICKER.md`.
+  - **Never read a single page of an Apple list endpoint.** `limit` is a *page size*, not a
+    result size: Apple returns at most 100 items and puts the rest behind a `next` cursor.
+    Reading one response silently truncated long playlists (and the whole iCloud library) at
+    100 songs with no error. Every list read goes through `ApiClient::fetch_all_pages`. See
+    `docs/04-bugs/08-PLAYLIST-PAGINATION.md`.
   - **Never rebuild the now-playing `<img>` (or any node) on every `player-state` tick** — it
     fires ~once a second while playing, and re-setting `innerHTML` makes the art flicker. Guard
     it with `state.streamArtworkUrl`. See `docs/04-bugs/06-AUTOREFRESH-FLICKER.md`.
@@ -180,7 +185,7 @@ decoder cannot help. Do not promise lossless without reading
 | `src-tauri/src/player/cookie.rs` (86) | percent/base64 codecs for the cookie state channel |
 | `src-tauri/src/player/media.rs` (266) | Windows media keys + SMTC flyout (hand-declared interop, metadata mirror) |
 | `src-tauri/src/api/auth.rs` (155) | Developer token, session persistence, storefront |
-| `src-tauri/src/api/client.rs` (620) | REST client: search, album, charts, library, playlists (read **and** create/rename/delete/add-tracks) |
+| `src-tauri/src/api/client.rs` (739) | REST client: search, album, charts, library, playlists (read **and** create/rename/delete/add-tracks); `fetch_all_pages` paginator |
 | `src-tauri/src/api/local_session.rs` (367) | Imports session from WebView2 cookie SQLite |
 | `src-tauri/src/api/models.rs` (90) | Store models |
 | `src-tauri/src/audio/**` (1,071) | **PARKED** local engine |
@@ -214,7 +219,8 @@ docs/
 │   ├── 04-PROGRESS-BAR-SEEK.md   ← Seek hit the wrong player (fixed)
 │   ├── 05-PLAYLIST-LIST-400.md   ← Playlists invisible: `include=tracks` → 400 (fixed)
 │   ├── 06-AUTOREFRESH-FLICKER.md ← Timer repaint + artwork rebuild flickered playback (fixed)
-│   └── 07-SUBFRAME-STATE-FLICKER.md ← Bootstrap ran in every frame → empty state fights real (fixed)
+│   ├── 07-SUBFRAME-STATE-FLICKER.md ← Bootstrap ran in every frame → empty state fights real (fixed)
+│   └── 08-PLAYLIST-PAGINATION.md ← Playlists/library truncated at 100 items (fixed)
 └── 05-reference/                 ← Decode reports, API contracts, audio-quality ceiling (see README there)
 ```
 

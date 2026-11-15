@@ -62,6 +62,7 @@ otherwise.
 | Now Playing (P3) | No full-screen view | `#now-playing-view` painted from `state.stream*`; opens from the bar artwork/title, `Esc` closes |
 | Queue drawer (P3) | Queue length shown, contents hidden | `mk_queue` cookie (base64) → `player-queue`; Up Next drawer with click-to-jump (verified live: `items=5`) |
 | Playlists (P2.6) | Read-only cards; "New Playlist" wrote to the parked local DB | Library playlists are the real ones; create/rename/delete/add-track write to Apple Music (measured live), local playlist UI removed |
+| Long playlists & library (bug 08) | Anything past the 100th song silently vanished | `fetch_all_pages` follows `next` / `offset`; `[PLAYLIST] N tracks` logged |
 
 ## Out of scope (deliberately)
 

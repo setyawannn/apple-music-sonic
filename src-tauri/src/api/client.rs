@@ -15,6 +15,14 @@ pub struct ApiClient {
     edge_url: String,
 }
 
+/// Apple caps list endpoints at 100 items per page. Anything longer has to be
+/// paged, and an unpaged read silently drops everything after item 100 — which
+/// is exactly how a 130-song playlist loses 30 songs without an error.
+const PAGE_LIMIT: usize = 100;
+
+/// Hard ceiling on pages per read, so a broken cursor can never hang the UI.
+const MAX_PAGES: usize = 200;
+
 impl ApiClient {
     pub fn new(auth: Arc<AuthManager>) -> Self {
         let http = reqwest::Client::builder()
@@ -69,6 +77,93 @@ impl ApiClient {
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
         headers
+    }
+
+    fn ensure_authenticated(&self) -> anyhow::Result<()> {
+        if self.auth.is_authenticated() {
+            Ok(())
+        } else {
+            anyhow::bail!("User is not authenticated with Apple ID")
+        }
+    }
+
+    /// One GET, parsed as JSON, with the same status handling everywhere.
+    async fn get_json(&self, url: &str) -> anyhow::Result<Value> {
+        let response = self
+            .http
+            .get(url)
+            .headers(self.build_headers())
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Apple Music API error: HTTP {}", response.status());
+        }
+
+        Ok(response.json().await?)
+    }
+
+    /// Apple's `next` is a path (`/v1/me/library/songs?offset=100&limit=100`);
+    /// accept an absolute URL too, in case that ever changes.
+    fn next_page_url(&self, page: &Value) -> Option<String> {
+        let next = page["next"].as_str()?;
+        if next.starts_with("http") {
+            Some(next.to_string())
+        } else {
+            Some(format!("{}{}", self.base_url, next))
+        }
+    }
+
+    fn list_url(&self, path: &str, offset: usize) -> String {
+        format!(
+            "{}{}?limit={}&offset={}&l={}",
+            self.base_url,
+            path,
+            PAGE_LIMIT,
+            offset,
+            self.auth.language()
+        )
+    }
+
+    /// Walk every page of a list endpoint. Apple's `next` cursor wins when it is
+    /// present; otherwise the offset is advanced by the page size. A page whose
+    /// first item repeats means the server ignored `offset`, so paging stops.
+    async fn fetch_all_pages(&self, path: &str) -> anyhow::Result<Vec<Value>> {
+        let mut items = Vec::new();
+        let mut offset = 0usize;
+        let mut cursor: Option<String> = None;
+        let mut previous_first_id: Option<String> = None;
+
+        for _ in 0..MAX_PAGES {
+            let url = match cursor.take() {
+                Some(next) => next,
+                None => self.list_url(path, offset),
+            };
+
+            let page = self.get_json(&url).await?;
+            let Some(data) = page["data"].as_array() else {
+                break;
+            };
+
+            let first_id = data
+                .first()
+                .and_then(|item| item["id"].as_str())
+                .map(str::to_string);
+            if first_id.is_some() && first_id == previous_first_id {
+                break;
+            }
+            previous_first_id = first_id;
+
+            items.extend(data.iter().cloned());
+            if data.len() < PAGE_LIMIT {
+                break;
+            }
+
+            offset += data.len();
+            cursor = self.next_page_url(&page);
+        }
+
+        Ok(items)
     }
 
     pub async fn search_catalog(
@@ -250,37 +345,10 @@ impl ApiClient {
     }
 
     pub async fn get_personal_library_songs(&self) -> anyhow::Result<Vec<StoreSong>> {
-        if !self.auth.is_authenticated() {
-            anyhow::bail!("User is not authenticated with Apple ID");
-        }
+        self.ensure_authenticated()?;
 
-        let language = self.auth.language();
-        let url = format!(
-            "{}/v1/me/library/songs?limit=100&l={}",
-            self.base_url, language
-        );
-
-        let response = self
-            .http
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to get personal library: HTTP {}", response.status());
-        }
-
-        let json: Value = response.json().await?;
-        let mut songs = Vec::new();
-
-        if let Some(data) = json["data"].as_array() {
-            for item in data {
-                songs.push(parse_single_song_json(item));
-            }
-        }
-
-        Ok(songs)
+        let items = self.fetch_all_pages("/v1/me/library/songs").await?;
+        Ok(items.iter().map(parse_single_song_json).collect())
     }
 
     pub async fn get_personal_recommendations(&self) -> anyhow::Result<Vec<StoreAlbum>> {
@@ -321,75 +389,27 @@ impl ApiClient {
     }
 
     pub async fn get_user_playlists(&self) -> anyhow::Result<Vec<CloudPlaylist>> {
-        if !self.auth.is_authenticated() {
-            anyhow::bail!("User is not authenticated with Apple ID");
-        }
+        self.ensure_authenticated()?;
 
-        let language = self.auth.language();
         // No `include=tracks` here: Apple returns **400** for it on library playlists
         // (measured; `include=trackCount` and `extend=tracks` are accepted but add nothing).
         // Track counts are therefore absent from the list — tracks are fetched on demand by
         // `get_playlist_tracks` when a playlist is opened.
-        let url = format!(
-            "{}/v1/me/library/playlists?limit=100&l={}",
-            self.base_url, language
-        );
-
-        let response = self
-            .http
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to get user playlists: HTTP {}", response.status());
-        }
-
-        let json: Value = response.json().await?;
-        let mut playlists = Vec::new();
-
-        if let Some(data) = json["data"].as_array() {
-            for item in data {
-                playlists.push(parse_single_playlist_json(item));
-            }
-        }
-
-        Ok(playlists)
+        let items = self.fetch_all_pages("/v1/me/library/playlists").await?;
+        Ok(items.iter().map(parse_single_playlist_json).collect())
     }
 
+    /// Every track in a library playlist, across all pages.
+    ///
+    /// Apple serves at most 100 per request; playlists routinely run longer, so
+    /// paging is not optional here — an unpaged read looked like "a few songs are
+    /// missing" with no error at all.
     pub async fn get_playlist_tracks(&self, playlist_id: &str) -> anyhow::Result<Vec<StoreSong>> {
-        if !self.auth.is_authenticated() {
-            anyhow::bail!("User is not authenticated with Apple ID");
-        }
+        self.ensure_authenticated()?;
 
-        let language = self.auth.language();
-        let url = format!(
-            "{}/v1/me/library/playlists/{}/tracks?limit=100&l={}",
-            self.base_url, playlist_id, language
-        );
-
-        let response = self
-            .http
-            .get(&url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to get playlist tracks: HTTP {}", response.status());
-        }
-
-        let json: Value = response.json().await?;
-        let mut songs = Vec::new();
-
-        if let Some(data) = json["data"].as_array() {
-            for item in data {
-                songs.push(parse_single_song_json(item));
-            }
-        }
-
-        Ok(songs)
+        let path = format!("/v1/me/library/playlists/{}/tracks", playlist_id);
+        let items = self.fetch_all_pages(&path).await?;
+        Ok(items.iter().map(parse_single_song_json).collect())
     }
 
     /// Create a library (iCloud) playlist owned by the user. Returns its id.

@@ -6,11 +6,24 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
 static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// `Engine::new()` opens the process-wide default WASAPI device, and these tests
+/// run in parallel threads inside one process. Windows will not hand out a
+/// second reliable playback stream to the same process, so the engine tests take
+/// this lock and share one device instead of racing for it (which made
+/// `test_pos_03_playback_lifecycle` fail intermittently under load).
+static AUDIO_DEVICE_LOCK: Mutex<()> = Mutex::new(());
+
+fn audio_device() -> MutexGuard<'static, ()> {
+    AUDIO_DEVICE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn temp_file_path(ext: &str) -> PathBuf {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -140,6 +153,7 @@ fn test_pos_03_playback_lifecycle() {
     let path = temp_file_path("wav");
     create_synthetic_wav(&path, 1.0, 44100, 2).expect("create wav");
 
+    let _device = audio_device();
     let engine = Engine::new();
 
     // 1. Initial State
@@ -196,6 +210,7 @@ fn test_pos_03_playback_lifecycle() {
 
 #[test]
 fn test_pos_04_volume_control() {
+    let _device = audio_device();
     let engine = Engine::new();
 
     for vol in [0.0f32, 0.25, 0.5, 0.85, 1.0] {
@@ -211,6 +226,7 @@ fn test_pos_05_accurate_seeking() {
     let path = temp_file_path("wav");
     create_synthetic_wav(&path, 5.0, 44100, 2).expect("create wav");
 
+    let _device = audio_device();
     let engine = Engine::new();
     engine
         .play_track_file(
@@ -331,6 +347,7 @@ fn test_neg_01_non_existent_file() {
     assert!(res.is_err(), "Opening non-existent file must return Err");
 
     // Engine should also handle non-existent file gracefully without crashing
+    let _device = audio_device();
     let engine = Engine::new();
     let play_res = engine.play_track_file(
         non_existent,
@@ -379,6 +396,7 @@ fn test_neg_04_seek_out_of_bounds_high() {
     let path = temp_file_path("wav");
     create_synthetic_wav(&path, 2.0, 44100, 2).expect("create wav");
 
+    let _device = audio_device();
     let engine = Engine::new();
     engine
         .play_track_file(
@@ -412,6 +430,7 @@ fn test_neg_05_seek_out_of_bounds_negative() {
     let path = temp_file_path("wav");
     create_synthetic_wav(&path, 3.0, 44100, 2).expect("create wav");
 
+    let _device = audio_device();
     let engine = Engine::new();
     engine
         .play_track_file(
@@ -440,6 +459,7 @@ fn test_neg_05_seek_out_of_bounds_negative() {
 
 #[test]
 fn test_neg_06_volume_out_of_bounds() {
+    let _device = audio_device();
     let engine = Engine::new();
 
     // Negative volume -> clamped to 0.0
@@ -478,6 +498,7 @@ fn test_neg_08_rapid_concurrent_commands() {
     let path = temp_file_path("wav");
     create_synthetic_wav(&path, 5.0, 44100, 2).expect("create wav");
 
+    let _device = audio_device();
     let engine = Arc::new(Engine::new());
     let mut handles = Vec::new();
 

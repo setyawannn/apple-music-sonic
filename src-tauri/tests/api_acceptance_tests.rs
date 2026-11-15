@@ -328,6 +328,94 @@ fn test_api_pos_08_user_sign_out() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PAGINATION (API-POS-09 .. API-POS-10)
+//
+// Apple returns at most 100 items per list request. Reading one page and
+// stopping is how a long playlist silently loses its tail.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A `{ "data": [...] }` page of `count` library songs, optionally with a `next` cursor.
+fn song_page(prefix: &str, count: usize, next: Option<&str>) -> String {
+    let items: Vec<String> = (0..count)
+        .map(|i| {
+            format!(
+                r#"{{"id":"{}-{}","type":"library-songs","attributes":{{"name":"Track {}","artistName":"Artist","albumName":"Album","durationInMillis":1000}}}}"#,
+                prefix, i, i
+            )
+        })
+        .collect();
+
+    let mut body = format!(r#"{{"data":[{}]"#, items.join(","));
+    if let Some(next) = next {
+        body.push_str(&format!(r#","next":"{}""#, next));
+    }
+    body.push('}');
+    body
+}
+
+#[tokio::test]
+async fn test_api_pos_09_playlist_tracks_follow_next_cursor() {
+    let page_one = song_page(
+        "a",
+        100,
+        Some("/v1/me/library/playlists/p.1/tracks?offset=100&limit=100"),
+    );
+    let page_two = song_page("b", 3, None);
+
+    let (server_url, shutdown_tx) = spawn_mock_server(move |line, _req| {
+        if line.contains("offset=100") {
+            (200, page_two.clone())
+        } else {
+            (200, page_one.clone())
+        }
+    })
+    .await;
+
+    let auth = Arc::new(AuthManager::in_memory());
+    auth.set_user_token(Some("pagination_token".to_string()))
+        .unwrap();
+
+    let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
+    let tracks = client.get_playlist_tracks("p.1").await.unwrap();
+
+    assert_eq!(tracks.len(), 103, "every page must be collected");
+    assert_eq!(tracks[0].id, "a-0");
+    assert_eq!(tracks[99].id, "a-99");
+    assert_eq!(tracks[100].id, "b-0", "paging must continue past item 100");
+    assert_eq!(tracks[102].id, "b-2");
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_api_pos_10_pagination_falls_back_to_offset() {
+    // No `next` in the response: the client must still advance by page size.
+    let page_one = song_page("a", 100, None);
+    let page_two = song_page("b", 5, None);
+
+    let (server_url, shutdown_tx) = spawn_mock_server(move |line, _req| {
+        if line.contains("offset=100") {
+            (200, page_two.clone())
+        } else {
+            (200, page_one.clone())
+        }
+    })
+    .await;
+
+    let auth = Arc::new(AuthManager::in_memory());
+    auth.set_user_token(Some("pagination_token".to_string()))
+        .unwrap();
+
+    let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
+    let library = client.get_personal_library_songs().await.unwrap();
+
+    assert_eq!(library.len(), 105);
+    assert_eq!(library[104].id, "b-4");
+
+    let _ = shutdown_tx.send(());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // NEGATIVE & BOUNDARY ACCEPTANCE TESTS (API-NEG-01 .. API-NEG-08)
 // ═══════════════════════════════════════════════════════════════════════════
 

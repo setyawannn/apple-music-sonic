@@ -126,6 +126,8 @@ fn test_ffi_pos_03_native_library_loader_and_memory() {
 
 #[test]
 fn test_ffi_pos_04_coreaudio_alac_ordinal_resolution() {
+    // Staged DLLs land in one shared bridge directory; one loader at a time.
+    let _lock = TEST_MUTEX.lock().unwrap();
     let locator = AppLocator::new();
     if let Ok(install) = locator.locate() {
         let bridge = CoreAudioBridge::load_from_dir(&install.install_dir).expect("load coreaudio");
@@ -140,6 +142,8 @@ fn test_ffi_pos_04_coreaudio_alac_ordinal_resolution() {
 
 #[test]
 fn test_ffi_pos_05_coremedia_real_name_symbol_binding() {
+    // Staged DLLs land in one shared bridge directory; one loader at a time.
+    let _lock = TEST_MUTEX.lock().unwrap();
     let locator = AppLocator::new();
     if let Ok(install) = locator.locate() {
         let media = CoreMediaBridge::load_from_dir(&install.install_dir).expect("load coremedia");
@@ -149,6 +153,8 @@ fn test_ffi_pos_05_coremedia_real_name_symbol_binding() {
 
 #[test]
 fn test_ffi_pos_06_coremedia_get_class_id_execution() {
+    // Staged DLLs land in one shared bridge directory; one loader at a time.
+    let _lock = TEST_MUTEX.lock().unwrap();
     let locator = AppLocator::new();
     if let Ok(install) = locator.locate() {
         let media = CoreMediaBridge::load_from_dir(&install.install_dir).expect("load coremedia");
@@ -159,6 +165,8 @@ fn test_ffi_pos_06_coremedia_get_class_id_execution() {
 
 #[test]
 fn test_ffi_pos_07_corefp_obfuscated_ordinals_mapping() {
+    // Staged DLLs land in one shared bridge directory; one loader at a time.
+    let _lock = TEST_MUTEX.lock().unwrap();
     let locator = AppLocator::new();
     if let Ok(install) = locator.locate() {
         let fp = CoreFpBridge::load_from_dir(&install.install_dir).expect("load corefp");
@@ -171,6 +179,8 @@ fn test_ffi_pos_07_corefp_obfuscated_ordinals_mapping() {
 
 #[test]
 fn test_ffi_pos_08_ram_budget_under_85mb() {
+    // Staged DLLs land in one shared bridge directory; one loader at a time.
+    let _lock = TEST_MUTEX.lock().unwrap();
     let locator = AppLocator::new();
     if let Ok(install) = locator.locate() {
         let _ca = CoreAudioBridge::load_from_dir(&install.install_dir).ok();

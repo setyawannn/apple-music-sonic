@@ -19,7 +19,12 @@ pub async fn get_cloud_playlist_tracks(
     state: State<'_, AppState>,
     playlist_id: String,
 ) -> AppResult<Vec<StoreSong>> {
-    Ok(state.api_client.get_playlist_tracks(&playlist_id).await?)
+    let result = state.api_client.get_playlist_tracks(&playlist_id).await;
+    match &result {
+        Ok(tracks) => println!("[PLAYLIST] {} tracks in {}", tracks.len(), playlist_id),
+        Err(e) => eprintln!("[PLAYLIST] tracks error: {}", e),
+    }
+    Ok(result?)
 }
 
 /// Create a playlist in the user's Apple Music library, optionally pre-filled.

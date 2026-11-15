@@ -240,3 +240,7 @@ The app uses `143476-2` which means:
 6. **Audio previews** are AAC files (30s clips)
 7. **Telemetry** goes to `xp.apple.com` (can be ignored)
 8. **No streaming URLs visible** — streaming is handled natively by `CoreMedia.dll` with HLS/FairPlay
+9. **Every list endpoint is paged at 100 items.** A full page comes with `next` (a path such as
+   `/v1/me/library/playlists/p.…/tracks?offset=100&limit=100`); ignore it and the collection is
+   silently truncated. `ApiClient::fetch_all_pages` follows it, with `offset` as the fallback.
+   See `docs/04-bugs/08-PLAYLIST-PAGINATION.md`.

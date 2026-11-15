@@ -55,9 +55,9 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Album detail + tracklist | `get_catalog_album` | ✅ album detail view (Play + Shuffle queue) |
 | Charts | `get_charts` | ✅ Listen Now fallback + Browse |
 | Recommendations | `get_recommendations` | ✅ (Listen Now) |
-| Personal iCloud songs | `get_personal_library` | ✅ Library / Albums / Artists, preloaded at sign-in |
+| Personal iCloud songs | `get_personal_library` | ✅ Library / Albums / Artists, preloaded at sign-in; **paged** (bug 08) |
 | Cloud playlists (read) | `get_cloud_playlists` | ✅ Playlists tab + sidebar; auto-synced (no manual button). Note: must omit `include=tracks` (400) — see bug 05 |
-| Cloud playlist tracks | `get_cloud_playlist_tracks` | ✅ detail with Play/Shuffle, rows play via the queue |
+| Cloud playlist tracks | `get_cloud_playlist_tracks` | ✅ detail with Play/Shuffle, rows play via the queue; **paged**, logs `[PLAYLIST] N tracks` |
 | Create / rename / delete playlist | `create_cloud_playlist`, `rename_cloud_playlist`, `delete_cloud_playlist` | ✅ writes to Apple Music (measured: 201/204/204) |
 | Add tracks to a playlist | `add_to_cloud_playlist` | ✅ `+` on any track row → picker (measured: 204) |
 | Remove a track from a playlist | — | ❌ Apple exposes no endpoint (404 on every form) |
@@ -110,15 +110,19 @@ challenge must come from a real CDM. Kept only because two diagnostics commands 
 | Suite | Tests | What it actually covers |
 |-------|-------|-------------------------|
 | Unit (in-module) | 59 | cookie parsing, percent-decode of the state channel, `AppError` serialization, SMTC button ids, DLL loader/locator/bindings |
-| `api_acceptance_tests` | 16 | models, JSON shapes, error paths |
-| `audio_acceptance_tests` | 16 | parked local engine |
-| `ffi_acceptance_tests` | 16 | abandoned DLL bindings (flaky under load: they stage DLLs into a shared dir) |
+| `api_acceptance_tests` | 18 | models, JSON shapes, error paths, list pagination (`next` cursor + offset fallback) |
+| `audio_acceptance_tests` | 16 | parked local engine (serializes the shared WASAPI device) |
+| `ffi_acceptance_tests` | 16 | abandoned DLL bindings (serializes the shared staged-DLL directory) |
 | `library_acceptance_tests` | 16 | parked SQLite library |
 | `streaming_acceptance_tests` | 16 | HLS parsers + parked stream cache |
 
 **Nothing tests the live streaming path** — no test touches the hidden webview, the JS
 command queue, the cookie poller, or the frontend. Verification for those is a dev run with
 `[PLAYER] state {...}` lines in the log.
+
+The two parked suites share process-global resources (one WASAPI device, one staged-DLL
+directory), so they take a process-wide lock around those resources. `cargo test` is now
+stable under the default parallel runner, not only with `--test-threads=1`.
 
 Code health: `cargo fmt --check` is clean under `rustfmt.toml` (100 columns), and
 `cargo clippy --no-default-features` reports no warnings. Every command returns

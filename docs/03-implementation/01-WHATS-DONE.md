@@ -82,6 +82,7 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Windows media keys + now-playing flyout (SMTC) | ✅ |
 | Up Next queue drawer (with jump-to-item) | ✅ |
 | Now Playing full-screen view (art, timeline, transport, volume) | ✅ |
+| Loading spinner clears on real playback, even when Apple reports a different id | ✅ (bug 09) |
 | Lyrics | ❌ |
 | Settings panel | ❌ |
 

@@ -204,11 +204,18 @@ The bar must never claim to be playing while Apple's player is still buffering, 
 frontend runs an explicit phase: `idle → loading → playing ⇄ paused`, or `error`.
 
 - `optimisticallyPlay()` enters `loading` and starts a 12 s watchdog.
-- The first `player-state` for that song id clears `loading`; reports for a *different* song
-  (the previous track) are ignored while a load is pending.
-- If the watchdog fires, the phase becomes `error` and a toast explains it. Before this, a
-  failed song just flipped the icon with a `console.error`.
-- The play button shows a spinner (`#play-spinner`) while loading.
+- `loading` ends when the player proves it started: `isPendingTrack` matches the pending row by
+  **id first, then title + artist**, because catalog and library are different id namespaces
+  (`1440…` vs `i.…`) and shuffle can legitimately begin on another item.
+- If the player is audibly playing something that still does not match after 3 s, the load
+  settles as `playing` — the bar describes the player, not the click, and logs
+  `[stream] player reports a different id than the click`.
+- The 12 s watchdog **never** reports a failure while `streamIsPlaying` is true; it settles to
+  `playing` instead. A real error (nothing audible, no item) becomes `error` plus a toast.
+  Before this, an id mismatch left the spinner up over audible audio and then claimed the song
+  "didn't start" (`docs/04-bugs/09-STUCK-LOADING.md`).
+- Both play buttons show the spinner (`#play-spinner` in the bar, `.np-play-btn.loading` in the
+  Now Playing view) — one phase, two mirrors.
 
 Title/artist/artwork still paint optimistically before the command is sent, so the bar is
 never empty; only the *transport* state waits for truth.

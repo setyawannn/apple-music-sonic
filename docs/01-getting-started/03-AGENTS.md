@@ -111,6 +111,12 @@ decoder cannot help. Do not promise lossless without reading
 - The frontend transport is a state machine (`streamPhase`): a play command enters `loading`
   and only a real `player-state` for that song clears it. Do not paint "playing" optimistically
   past the icon/title — the whole point of P0 is that the bar tells the truth.
+  - **"For that song" cannot mean "for that id".** Catalog ids and library ids (`i.…`) are
+    different namespaces, `setQueue({ songs })` is the catalog API, and shuffle can start a
+    different item. `isPendingTrack` matches id first, then title + artist, settles on real
+    playback after a 3 s grace, and the watchdog **never** reports a failure while
+    `streamIsPlaying` is true. A strict id equality here left the spinner up over audible audio
+    and fired a false "this song didn't start" toast. See `docs/04-bugs/09-STUCK-LOADING.md`.
 - Playlists are the user's **Apple Music library playlists**, not the parked local SQLite ones.
   The write endpoints (`create/rename/delete/add-track`) live in `api/client.rs` and were
   measured against a live session:
@@ -220,7 +226,8 @@ docs/
 │   ├── 05-PLAYLIST-LIST-400.md   ← Playlists invisible: `include=tracks` → 400 (fixed)
 │   ├── 06-AUTOREFRESH-FLICKER.md ← Timer repaint + artwork rebuild flickered playback (fixed)
 │   ├── 07-SUBFRAME-STATE-FLICKER.md ← Bootstrap ran in every frame → empty state fights real (fixed)
-│   └── 08-PLAYLIST-PAGINATION.md ← Playlists/library truncated at 100 items (fixed)
+│   ├── 08-PLAYLIST-PAGINATION.md ← Playlists/library truncated at 100 items (fixed)
+│   └── 09-STUCK-LOADING.md       ← Spinner stuck / false "didn't start" over audible audio (fixed)
 └── 05-reference/                 ← Decode reports, API contracts, audio-quality ceiling (see README there)
 ```
 

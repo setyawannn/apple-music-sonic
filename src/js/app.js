@@ -43,6 +43,9 @@ const state = {
   // report for that song, so the UI never shows a fake "playing" while buffering.
   streamPhase: "idle",
   streamPendingId: null,
+  streamPendingTitle: "",
+  streamPendingArtist: "",
+  streamLoadStartedAt: 0,
   streamLoadTimer: null,
   streamError: null,
   // Last session recalled from disk (state + queue); used to restore the bar and
@@ -85,6 +88,7 @@ const modalAuthBody = $("#modal-auth-body");
 const playBtn = $("#play-btn");
 const playIcon = $("#play-icon");
 const playSpinner = $("#play-spinner");
+const npPlayBtn = $("#np-play-btn");
 const toastHost = $("#toast-host");
 const queueBtn = $("#queue-btn");
 const queueCount = $("#queue-count");
@@ -318,9 +322,17 @@ function applyPlayerState(payload) {
   if (typeof payload.volume === "number") state.streamVolume = payload.volume;
 
   // A real report for the song we're waiting on ends the loading state. While a
-  // load is pending, reports for another song (or a null id) are ignored.
-  if (!state.streamPendingId || (payload.id && payload.id === state.streamPendingId)) {
+  // load is pending, reports for a different song are ignored — except when the
+  // player is audibly playing something else for a while, which means the queue was
+  // re-mapped to an id we cannot match (never leave the spinner up over real audio).
+  if (!state.streamPendingId || isPendingTrack(payload)) {
     settleStreamPhase(state.streamIsPlaying);
+  } else if (payload.isPlaying && Date.now() - state.streamLoadStartedAt >= 3000) {
+    console.info(
+      "[stream] player reports a different id than the click; trusting the player",
+      { pending: state.streamPendingId, playing: payload.id, title: payload.title }
+    );
+    settleStreamPhase(true);
   }
 
   paintStreamControls();
@@ -360,9 +372,23 @@ function applyPlayerState(payload) {
   }
 
   // Highlight the row that is actually playing (Apple's list state), and clear
-  // the highlight from the rest.
+  // the highlight from the rest. The player can report a library id for a catalog
+  // row, so fall back to title + artist when the ids do not line up.
+  const nowTitle = normalizeTrackText(payload.title);
+  const nowArtist = normalizeTrackText(payload.artist);
   document.querySelectorAll(".track-item.stream-track").forEach((el) => {
-    el.classList.toggle("playing", !!payload.id && el.dataset.catalogId === payload.id);
+    if (!payload.id) {
+      el.classList.remove("playing");
+      return;
+    }
+    const sameId = el.dataset.catalogId === payload.id;
+    const sameName =
+      !!nowTitle &&
+      normalizeTrackText(el.dataset.title) === nowTitle &&
+      (!nowArtist ||
+        !normalizeTrackText(el.dataset.artist) ||
+        normalizeTrackText(el.dataset.artist) === nowArtist);
+    el.classList.toggle("playing", sameId || sameName);
   });
 
   if (state.nowPlayingOpen) paintNowPlaying();
@@ -1391,7 +1417,7 @@ function optimisticallyPlay(song, queueLength) {
   if (currentTime) currentTime.textContent = "0:00";
   if (totalTime && state.streamDuration > 0) totalTime.textContent = formatTime(state.streamDuration);
   // Enter the loading state until the hidden player reports this song for real.
-  beginStreamLoad(song.id || null);
+  beginStreamLoad(song);
 }
 
 async function playCatalogTracks(tracks, startId, shuffle = false) {
@@ -1876,24 +1902,61 @@ trackRowObserver.observe(mainView, { childList: true, subtree: true });
 // ─── Transport state machine ───────────────────────────────────
 //
 // Phases: idle → loading → playing ⇄ paused, or error. `loading` is entered when a
-// play command is dispatched and left only when the hidden player reports that
-// song back (or the watchdog gives up), so the UI never claims to be playing while
-// Apple's player is still buffering.
+// play command is dispatched and left only when the hidden player reports our song,
+// so the UI never claims to be playing while Apple's player is still buffering.
+//
+// Identity trap: catalog and library are separate id namespaces. Ask for a catalog
+// id and the player frequently reports the library twin (`i.…`), or the other way
+// round; sometimes the same song even comes back under a re-derived id. A strict
+// `payload.id === pendingId` test therefore never matched, the spinner span
+// forever, and the 12 s watchdog fired "this song didn't start" over an audible
+// song. Match on id first, then on title + artist, and never report failure while
+// audio is actually playing.
 
-function beginStreamLoad(songId) {
-  state.streamPendingId = songId;
+function normalizeTrackText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+// Is this player report the song we are waiting for?
+function isPendingTrack(payload) {
+  if (!state.streamPendingId) return true;
+  if (payload.id && payload.id === state.streamPendingId) return true;
+
+  const title = normalizeTrackText(payload.title);
+  if (!title || title !== state.streamPendingTitle) return false;
+
+  const artist = normalizeTrackText(payload.artist);
+  // A missing artist on either side is not evidence against the match.
+  return !artist || !state.streamPendingArtist || artist === state.streamPendingArtist;
+}
+
+function beginStreamLoad(song) {
+  const id = (song && song.id) || null;
+  state.streamPendingId = id;
+  state.streamPendingTitle = normalizeTrackText(song && song.title);
+  state.streamPendingArtist = normalizeTrackText(song && song.artist);
+  state.streamLoadStartedAt = Date.now();
   state.streamError = null;
   state.streamPhase = "loading";
   paintStreamPhase();
 
   clearTimeout(state.streamLoadTimer);
   state.streamLoadTimer = setTimeout(() => {
-    if (state.streamPhase === "loading" && state.streamPendingId === songId) {
-      state.streamPhase = "error";
-      state.streamError = "This song didn't start. It may be unavailable, or you may need to sign in again.";
-      paintStreamPhase();
-      showToast(state.streamError, "error");
+    if (state.streamPhase !== "loading" || state.streamPendingId !== id) return;
+    // Something is audibly playing: the bar must describe the player, not the click.
+    // A mismatch this late is a queue re-map, not a failure.
+    if (state.streamIsPlaying && state.streamCurrentId) {
+      settleStreamPhase(true);
+      return;
     }
+    state.streamPhase = "error";
+    state.streamError =
+      "This song didn't start. It may be unavailable, or you may need to sign in again.";
+    paintStreamPhase();
+    showToast(state.streamError, "error");
   }, 12000);
 }
 
@@ -1901,15 +1964,21 @@ function settleStreamPhase(isPlaying) {
   clearTimeout(state.streamLoadTimer);
   state.streamLoadTimer = null;
   state.streamPendingId = null;
+  state.streamPendingTitle = "";
+  state.streamPendingArtist = "";
+  state.streamLoadStartedAt = 0;
   state.streamError = null;
   state.streamPhase = isPlaying ? "playing" : "paused";
   paintStreamPhase();
 }
 
 // Repaint only the loading affordance; the transport buttons are painted by
-// paintStreamControls() from the player's own state.
+// paintStreamControls() from the player's own state. Both bars show it, because
+// they are mirrors of the same phase.
 function paintStreamPhase() {
-  if (playBtn) playBtn.classList.toggle("loading", state.streamPhase === "loading");
+  const loading = state.streamPhase === "loading";
+  if (playBtn) playBtn.classList.toggle("loading", loading);
+  if (npPlayBtn) npPlayBtn.classList.toggle("loading", loading);
 }
 
 function showToast(message, kind = "info", ttl = 6000) {

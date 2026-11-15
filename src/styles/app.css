@@ -1600,10 +1600,24 @@ html, body {
   height: 58px;
   background: rgba(255, 255, 255, 0.14);
   color: #fff;
+  position: relative;
 }
 
 .np-play-btn:hover {
   background: rgba(255, 255, 255, 0.24);
+}
+
+/* The now-playing play button mirrors the transport bar's loading spinner. */
+.np-play-btn.loading > svg {
+  visibility: hidden;
+}
+
+.np-play-btn.loading .play-spinner {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-color: rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
 }
 
 .np-volume {

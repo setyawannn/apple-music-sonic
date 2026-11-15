@@ -56,6 +56,7 @@ otherwise.
 | Cloud playlists (P2) | Names only; tracks unreachable | Artwork cards open the track list; rows play through the queue |
 | Welcome screen (P2) | "Scan My Music" local-scanner CTA | Sign-in CTA / Go to Listen Now |
 | Loading/error surface (P3) | Failed songs flipped the icon silently | `streamPhase` state machine, play-button spinner, error toast, 12 s watchdog |
+| Stuck spinner / false failure (bug 09) | Spinner stayed up over audible audio; toast claimed the song "didn't start" | `isPendingTrack` matches id, then title + artist; 3 s grace; the watchdog never errors while `streamIsPlaying` |
 | Resume on launch (P3) | Only the session survived a restart | `player_state.json` + `player_queue.json`; bar restores paused, play rebuilds the queue |
 | Keyboard (P3) | Mouse only | Space / arrows / `M` + hardware media keys |
 | Media keys + flyout (P3) | OS media keys did nothing; the Windows flyout showed nothing | SMTC bound to the main window (`player/media.rs`); buttons map to `player_command`, flyout mirrors `player-state` |

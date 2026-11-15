@@ -28,12 +28,15 @@ impl Scanner {
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.path().extension().map(|ext| {
-                    matches!(
-                        ext.to_str().unwrap_or("").to_lowercase().as_str(),
-                        "mp3" | "m4a" | "flac" | "wav" | "ogg" | "alac"
-                    )
-                }).unwrap_or(false)
+                e.path()
+                    .extension()
+                    .map(|ext| {
+                        matches!(
+                            ext.to_str().unwrap_or("").to_lowercase().as_str(),
+                            "mp3" | "m4a" | "flac" | "wav" | "ogg" | "alac"
+                        )
+                    })
+                    .unwrap_or(false)
             })
         {
             let path = entry.path();

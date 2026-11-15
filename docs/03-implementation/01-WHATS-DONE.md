@@ -79,9 +79,9 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Loading spinner + error toast (transport state machine) | ✅ |
 | Resume last track/queue on launch | ✅ state live-verified; queue rebuild compile-verified |
 | Keyboard shortcuts (Space, arrows, `M`) | ✅ |
-| Windows media keys | ❌ |
+| Windows media keys + now-playing flyout (SMTC) | ✅ |
 | Up Next queue drawer (with jump-to-item) | ✅ |
-| Now Playing full-screen view | ❌ |
+| Now Playing full-screen view (art, timeline, transport, volume) | ✅ |
 | Lyrics | ❌ |
 | Settings panel | ❌ |
 
@@ -105,11 +105,11 @@ See `04-PARKED-LOCAL-PLAYBACK.md`.
 `SetDllDirectoryW` with an RAII scope. It loads. It never decrypted anything: the license
 challenge must come from a real CDM. Kept only because two diagnostics commands reference it.
 
-## 8. Tests — 130 pass, 0 fail (2026-11-13)
+## 8. Tests — 141 pass, 0 fail (2026-11-15)
 
 | Suite | Tests | What it actually covers |
 |-------|-------|-------------------------|
-| Unit (in-module) | 50 | cookie parsing, percent-decode of the state channel, DLL loader/locator/bindings |
+| Unit (in-module) | 59 | cookie parsing, percent-decode of the state channel, `AppError` serialization, SMTC button ids, DLL loader/locator/bindings |
 | `api_acceptance_tests` | 16 | models, JSON shapes, error paths |
 | `audio_acceptance_tests` | 16 | parked local engine |
 | `ffi_acceptance_tests` | 16 | abandoned DLL bindings (flaky under load: they stage DLLs into a shared dir) |
@@ -119,6 +119,12 @@ challenge must come from a real CDM. Kept only because two diagnostics commands 
 **Nothing tests the live streaming path** — no test touches the hidden webview, the JS
 command queue, the cookie poller, or the frontend. Verification for those is a dev run with
 `[PLAYER] state {...}` lines in the log.
+
+Code health: `cargo fmt --check` is clean under `rustfmt.toml` (100 columns), and
+`cargo clippy --no-default-features` reports no warnings. Every command returns
+`AppResult<T>`; `AppError` (`error.rs`) is typed and serialized as a plain message so the
+existing toasts keep working. `AppState` is in `state.rs`, commands live in `commands/`, and
+the hidden player lives in `player/` (`bootstrap.js`, `cookie.rs`, `media.rs`).
 
 ## Summary
 
@@ -130,12 +136,16 @@ command queue, the cookie poller, or the frontend. Verification for those is a d
 | Transport (next/prev/shuffle/repeat/volume) | ✅ done (P1, queue model A) |
 | Catalog browse/search/charts/recs | ✅ done |
 | Album detail, iCloud library, cloud playlists (read + write) | ✅ done (P2) |
-| Loading/error state, keyboard shortcuts, resume on launch | ✅ done (P3, partial) |
+| Loading/error state, keyboard shortcuts, resume on launch | ✅ done (P3) |
+| Windows media keys, Windows now-playing flyout | ✅ done (P3) |
+| Full-screen Now Playing view | ✅ done (P3) |
 | Browse / Radio | ✅ Browse · ❌ Radio (stations API) |
 | Local file playback | ⏸ parked |
 | Native decryption | ⚰ abandoned |
 
 The app is a working Apple Music player whose interface matches what the player is doing:
 the queue is the list you clicked, and the transport bar reports MusicKit's own state.
-P3 is well underway: loading/error states, keyboard shortcuts, resume-on-launch and the Up Next
-queue drawer are in; media keys and a full Now Playing view remain.
+P3 is complete: loading/error states, keyboard shortcuts, resume-on-launch, the Up Next
+queue drawer, Windows media keys with the SMTC flyout, and the full-screen Now Playing view
+are all in. What remains is not transport work: Radio needs Apple's stations API, and library
+album grouping needs a collection id the library song model does not carry.

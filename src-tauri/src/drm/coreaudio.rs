@@ -1,7 +1,7 @@
+use crate::drm::loader::{LoaderError, NativeLibrary};
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Arc;
-use crate::drm::loader::{NativeLibrary, LoaderError};
 
 #[derive(Debug)]
 pub struct CoreAudioBridge {
@@ -102,7 +102,10 @@ mod tests {
         if let Ok(install) = AppLocator::new().locate() {
             let bridge = CoreAudioBridge::load_from_dir(&install.install_dir);
             if let Ok(bridge) = bridge {
-                assert!(bridge.is_operational(), "CoreAudio bridge must be operational");
+                assert!(
+                    bridge.is_operational(),
+                    "CoreAudio bridge must be operational"
+                );
             }
         }
     }
@@ -111,7 +114,10 @@ mod tests {
     fn test_ca_pos_02_alac_decoder_ordinal_8_valid() {
         if let Ok(install) = AppLocator::new().locate() {
             if let Ok(bridge) = CoreAudioBridge::load_from_dir(&install.install_dir) {
-                assert!(!bridge.alac_decoder_ptr.is_null(), "ALAC decoder ptr must not be null");
+                assert!(
+                    !bridge.alac_decoder_ptr.is_null(),
+                    "ALAC decoder ptr must not be null"
+                );
                 let status = bridge.decoder_status();
                 assert!(status.alac_ready);
             }
@@ -216,7 +222,8 @@ mod tests {
 
     #[test]
     fn test_ca_neg_04_graceful_handling_on_corrupt_dll_headers() {
-        let temp_dir = std::env::temp_dir().join(format!("corrupt_ca_dir_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("corrupt_ca_dir_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir).unwrap();
 
         let bad_dll = temp_dir.join("CoreAudioToolbox.dll");

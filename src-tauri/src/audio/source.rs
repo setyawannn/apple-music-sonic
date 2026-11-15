@@ -42,8 +42,8 @@ impl SymphoniaSource {
         };
         let meta_opts = MetadataOptions::default();
 
-        let probed = symphonia::default::get_probe()
-            .format(&hint, mss, &format_opts, &meta_opts)?;
+        let probed =
+            symphonia::default::get_probe().format(&hint, mss, &format_opts, &meta_opts)?;
 
         let reader = probed.format;
 
@@ -60,12 +60,11 @@ impl SymphoniaSource {
         let sample_rate = codec_params
             .sample_rate
             .ok_or_else(|| anyhow::anyhow!("Unknown sample rate"))?;
-        let channels = codec_params
-            .channels
-            .map(|c| c.count() as u16)
-            .unwrap_or(2);
+        let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
 
-        let duration_secs = if let (Some(n_frames), Some(time_base)) = (codec_params.n_frames, codec_params.time_base) {
+        let duration_secs = if let (Some(n_frames), Some(time_base)) =
+            (codec_params.n_frames, codec_params.time_base)
+        {
             let time = time_base.calc_time(n_frames);
             Some(time.seconds as f64 + time.frac)
         } else {
@@ -165,9 +164,7 @@ impl Iterator for SymphoniaSource {
             }
 
             // Current buffer exhausted, read next packet
-            if self.read_next_packet().is_none() {
-                return None;
-            }
+            self.read_next_packet()?;
         }
     }
 }

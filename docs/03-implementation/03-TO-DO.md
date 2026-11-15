@@ -1,6 +1,6 @@
 # Apple Music RS — To-Do
 
-> Last updated: 2026-11-13
+> Last updated: 2026-11-15
 > **Scope: clone Apple Music only.** Local file playback is parked
 > (`04-PARKED-LOCAL-PLAYBACK.md`) — not on this list, not being deleted.
 
@@ -103,7 +103,7 @@ endpoint (see `HOW-IT-WORKS`). Left out rather than faking it.
 
 ---
 
-## P3 — Polish — 🚧 IN PROGRESS
+## P3 — Polish — ✅ DONE (2026-11-15)
 
 ### P3.1 Transport state machine + error surface — ✅ DONE (2026-11-13)
 `app.js` tracks `streamPhase` (idle / loading / playing / paused / error). A play command
@@ -133,12 +133,33 @@ bar's queue button shows the length; the drawer lists the rows, highlights the p
 clicking a row calls `stream_jump_to` → `changeToMediaAtIndex` (58 commands). Verified live:
 `[PLAYER] queue items=5`.
 
-### Remaining
-- Windows media keys (needs a global-shortcut plugin / native hook).
-- A full-screen Now Playing view.
-- Radio: Apple stations API.
+### P3.5 Windows media keys + now-playing flyout — ✅ DONE (2026-11-15)
+`player/media.rs` binds `ISystemMediaTransportControlsInterop` to the **main window** (the
+flyout must point at the window the user is looking at, not the hidden player) and maps OS
+button presses to the same `player_command`s the UI sends: resume/pause/stop/next/previous.
+The flyout's title/artist/album/artwork/status mirror the `player-state` blob, so it lies
+exactly as much as the transport bar does — which is never. No global-shortcut plugin was
+added; SMTC is the platform API for this.
+
+Two traps cost a crash each, both documented in `AGENTS.md`: the interop interface is
+**missing from the `windows` crate metadata**, so `InteropVtbl` is declared by hand (7 slots),
+and the activation factory must be requested **by the interop IID**. Asking for `IUnknown`
+returns the object's primary vtable, and reading a fixed slot from it access-violates
+(`0xc0000005`). Registration failure is logged and non-fatal, so the app still runs without
+media keys. Dep: target-gated `windows = "0.62"` (same version Tauri uses, so `HWND` unifies).
+
+### P3.6 Full-screen Now Playing view — ✅ DONE (2026-11-15)
+Click the transport bar's artwork or title → `#now-playing-view`; `Esc` or the chevron closes
+it. It is a **mirror, never a second source of truth**: `paintNowPlaying()` reads `state.stream*`
+(filled by `applyPlayerState`), its buttons forward to the bar's own handlers, and
+`seekToFraction` / `setVolumeFraction` are shared by both bars. Artwork is guarded by URL so
+the ~1 Hz state ticks never rebuild the `<img>` (the flicker rule from bug 06).
+
+### Remaining (not transport work)
+- Radio: Apple stations API (`renderRadio` is an honest placeholder).
 - Library album grouping currently keys on `artist + album name` because the library song
   model carries no collection id; add one if Apple returns it for library songs.
+- Removing a track from a playlist: Apple returns 404 on every endpoint form.
 
 ---
 

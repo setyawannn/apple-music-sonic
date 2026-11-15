@@ -6,7 +6,11 @@ use std::path::Path;
 pub struct PlaylistFileHelper;
 
 impl PlaylistFileHelper {
-    pub fn export_m3u8(playlist_name: &str, tracks: &[Track], out_path: &Path) -> anyhow::Result<()> {
+    pub fn export_m3u8(
+        playlist_name: &str,
+        tracks: &[Track],
+        out_path: &Path,
+    ) -> anyhow::Result<()> {
         let mut file = File::create(out_path)?;
         writeln!(file, "#EXTM3U")?;
         writeln!(file, "#PLAYLIST:{}", playlist_name)?;
@@ -70,7 +74,8 @@ impl PlaylistFileHelper {
         let reader = BufReader::new(file);
         let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
 
-        let mut entries: std::collections::BTreeMap<usize, String> = std::collections::BTreeMap::new();
+        let mut entries: std::collections::BTreeMap<usize, String> =
+            std::collections::BTreeMap::new();
         for line_res in reader.lines() {
             let line = line_res?;
             let trimmed = line.trim();

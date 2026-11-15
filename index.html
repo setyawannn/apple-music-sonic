@@ -172,6 +172,75 @@
     <div class="queue-drawer-body" id="queue-drawer-body"></div>
   </aside>
 
+  <!-- Full-screen Now Playing view -->
+  <section id="now-playing-view" class="np-view" aria-hidden="true" aria-label="Now Playing">
+    <div class="np-backdrop" id="np-backdrop"></div>
+    <div class="np-scrim"></div>
+    <div class="np-panel">
+      <header class="np-header">
+        <button class="np-icon-btn" id="np-close-btn" title="Close (Esc)" aria-label="Close Now Playing">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+          </svg>
+        </button>
+        <span class="np-eyebrow">Now Playing</span>
+        <button class="np-icon-btn np-queue-btn" id="np-queue-btn" title="Up Next">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h11v2H4V6zm0 5h11v2H4v-2zm0 5h7v2H4v-2zm12-9.5l4.5 3.5-4.5 3.5v-7z"/></svg>
+          <span class="queue-count" id="np-queue-count" style="display: none;"></span>
+        </button>
+      </header>
+
+      <div class="np-stage">
+        <div class="np-art" id="np-art"></div>
+
+        <div class="np-meta">
+          <h1 class="np-title" id="np-title">No Track Selected</h1>
+          <p class="np-artist" id="np-artist">Open your library to start playing</p>
+          <p class="np-album" id="np-album"></p>
+
+          <div class="np-progress">
+            <div class="progress-bar np-bar" id="np-progress-bar">
+              <div class="progress-fill" id="np-progress-fill" style="width: 0%"></div>
+              <div class="progress-handle" id="np-progress-handle"></div>
+            </div>
+            <div class="np-times">
+              <span id="np-current-time">0:00</span>
+              <span id="np-total-time">0:00</span>
+            </div>
+          </div>
+
+          <div class="np-controls">
+            <button class="np-control-btn" id="np-shuffle-btn" title="Shuffle">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+            </button>
+            <button class="np-control-btn" id="np-prev-btn" title="Previous (Ctrl+←)">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
+            <button class="np-control-btn np-play-btn" id="np-play-btn" title="Play / Pause (Space)">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                <path id="np-play-icon" d="M8 5v14l11-7z"/>
+              </svg>
+            </button>
+            <button class="np-control-btn" id="np-next-btn" title="Next (Ctrl+→)">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
+            <button class="np-control-btn" id="np-repeat-btn" title="Repeat: Off">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+            </button>
+          </div>
+
+          <div class="np-volume">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/></svg>
+            <div class="progress-bar np-volume-bar" id="np-volume-bar">
+              <div class="progress-fill" id="np-volume-fill" style="width: 80%"></div>
+              <div class="progress-handle" id="np-volume-handle"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Transient messages (playback errors, notices) -->
   <div id="toast-host" class="toast-host" role="status" aria-live="polite"></div>
 

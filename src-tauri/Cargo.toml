@@ -13,6 +13,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.7.4", features = [] }
 
+[lints.clippy]
+# Keep the standard lint groups on; correctness stays a hard error.
+all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -49,3 +54,14 @@ chrono = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 libloading = "0.8"
+
+# Windows media keys + now-playing flyout (SMTC). Version must match Tauri's own
+# `windows` dependency so `HWND` is the same type across the boundary.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Media",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_System_WinRT",
+] }

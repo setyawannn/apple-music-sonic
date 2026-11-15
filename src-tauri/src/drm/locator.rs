@@ -21,11 +21,7 @@ pub struct AppleInstallation {
     pub available_dlls: Vec<String>,
 }
 
-pub const CRITICAL_DLLS: &[&str] = &[
-    "CoreAudioToolbox.dll",
-    "CoreMedia.dll",
-    "CoreFP.dll",
-];
+pub const CRITICAL_DLLS: &[&str] = &["CoreAudioToolbox.dll", "CoreMedia.dll", "CoreFP.dll"];
 
 pub const OPTIONAL_DLLS: &[&str] = &[
     "AuthKitWin.dll",
@@ -63,8 +59,8 @@ impl AppLocator {
         })?;
 
         let available_dlls = self.verify_dlls(&install_dir)?;
-        let version = Self::parse_version_from_path(&install_dir)
-            .unwrap_or_else(|| "unknown".to_string());
+        let version =
+            Self::parse_version_from_path(&install_dir).unwrap_or_else(|| "unknown".to_string());
 
         Ok(AppleInstallation {
             install_dir,
@@ -123,7 +119,11 @@ impl AppLocator {
         if let Ok(entries) = std::fs::read_dir(install_dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
-                if p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("dll")).unwrap_or(false) {
+                if p.is_file()
+                    && p.extension()
+                        .map(|e| e.eq_ignore_ascii_case("dll"))
+                        .unwrap_or(false)
+                {
                     if let Some(file_name) = p.file_name() {
                         let name_lower = file_name.to_string_lossy().to_lowercase();
                         // CRITICAL: NEVER copy Microsoft UI, DWM, or WebView2 DLLs into our bridge directory!
@@ -446,7 +446,10 @@ mod tests {
 
     fn create_mock_install_dir() -> (PathBuf, PathBuf) {
         let unique = uuid::Uuid::new_v4();
-        let install_dir = std::env::temp_dir().join(format!("AppleInc.AppleMusicWin_1.1792.39682.0_mock_{}", unique));
+        let install_dir = std::env::temp_dir().join(format!(
+            "AppleInc.AppleMusicWin_1.1792.39682.0_mock_{}",
+            unique
+        ));
         let local_state = std::env::temp_dir().join(format!("LocalState_mock_{}", unique));
 
         fs::create_dir_all(&install_dir).expect("create mock install dir");
@@ -470,10 +473,20 @@ mod tests {
         // If Apple Music is installed on the host, it should succeed
         if let Ok(install) = result {
             assert!(install.install_dir.exists(), "install_dir must exist");
-            assert!(install.local_state_dir.exists(), "local_state_dir must exist");
-            assert!(!install.available_dlls.is_empty(), "critical DLLs must be present");
-            assert!(install.available_dlls.contains(&"CoreAudioToolbox.dll".to_string()));
-            assert!(install.available_dlls.contains(&"CoreMedia.dll".to_string()));
+            assert!(
+                install.local_state_dir.exists(),
+                "local_state_dir must exist"
+            );
+            assert!(
+                !install.available_dlls.is_empty(),
+                "critical DLLs must be present"
+            );
+            assert!(install
+                .available_dlls
+                .contains(&"CoreAudioToolbox.dll".to_string()));
+            assert!(install
+                .available_dlls
+                .contains(&"CoreMedia.dll".to_string()));
             assert!(install.available_dlls.contains(&"CoreFP.dll".to_string()));
         }
     }
@@ -498,7 +511,9 @@ mod tests {
 
     #[test]
     fn test_loc_pos_03_version_string_extraction() {
-        let p1 = PathBuf::from(r"C:\Program Files\WindowsApps\AppleInc.AppleMusicWin_1.1792.39682.0_x64__nzyj5cx40ttqa");
+        let p1 = PathBuf::from(
+            r"C:\Program Files\WindowsApps\AppleInc.AppleMusicWin_1.1792.39682.0_x64__nzyj5cx40ttqa",
+        );
         let v1 = AppLocator::parse_version_from_path(&p1);
         assert_eq!(v1.as_deref(), Some("1.1792.39682.0"));
 
@@ -531,7 +546,8 @@ mod tests {
     #[test]
     fn test_loc_neg_01_system_without_apple_music_returns_not_installed() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        let fake_path = std::env::temp_dir().join(format!("fake_apple_music_{}", uuid::Uuid::new_v4()));
+        let fake_path =
+            std::env::temp_dir().join(format!("fake_apple_music_{}", uuid::Uuid::new_v4()));
         let _g = EnvGuard::set("APPLE_MUSIC_INSTALL_DIR", &fake_path);
 
         let locator = AppLocator::new();
@@ -567,7 +583,8 @@ mod tests {
     fn test_loc_neg_03_non_existent_local_state_returns_error() {
         let _lock = ENV_MUTEX.lock().unwrap();
         let (mock_install, _) = create_mock_install_dir();
-        let fake_local = std::env::temp_dir().join(format!("fake_local_state_{}", uuid::Uuid::new_v4()));
+        let fake_local =
+            std::env::temp_dir().join(format!("fake_local_state_{}", uuid::Uuid::new_v4()));
 
         let _g1 = EnvGuard::set("APPLE_MUSIC_INSTALL_DIR", &mock_install);
         let _g2 = EnvGuard::set("APPLE_MUSIC_LOCAL_STATE_DIR", &fake_local);
@@ -595,4 +612,3 @@ mod tests {
         assert_eq!(err, LocatorError::NotInstalled);
     }
 }
-

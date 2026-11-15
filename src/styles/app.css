@@ -1405,3 +1405,239 @@ html, body {
   opacity: 0.45;
   cursor: default;
 }
+
+/* -- Full-screen Now Playing -------------------------------------------
+   A blurred, colour-washed backdrop of the current artwork under a large
+   cover and the same transport the bar offers. Painting is driven by the
+   player's own state, exactly like the bar. */
+
+.now-playing-art,
+.now-playing-info {
+  cursor: pointer;
+}
+
+.now-playing-art:hover,
+.now-playing-info:hover .track-name {
+  color: var(--text-primary);
+  opacity: 0.85;
+}
+
+.np-view {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: none;
+  overflow: hidden;
+  color: var(--text-primary);
+}
+
+.np-view.open {
+  display: block;
+}
+
+.np-backdrop {
+  position: absolute;
+  inset: -25%;
+  background-position: center;
+  background-size: cover;
+  filter: blur(64px) saturate(1.6);
+  transform: scale(1.15);
+  opacity: 0.55;
+}
+
+.np-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(12, 12, 13, 0.55) 0%,
+    rgba(12, 12, 13, 0.88) 62%,
+    #0b0b0c 100%
+  );
+}
+
+.np-panel {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 28px 30px;
+}
+
+.np-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.np-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.np-icon-btn {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.np-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.np-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(200px, 42%) 1fr;
+  align-items: center;
+  gap: 56px;
+  padding: 8px 5%;
+}
+
+.np-art {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  max-width: 460px;
+  justify-self: end;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 28px 64px rgba(0, 0, 0, 0.6);
+}
+
+.np-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.np-meta {
+  min-width: 0;
+}
+
+.np-title {
+  margin: 0 0 8px;
+  font-size: clamp(22px, 3vw, 34px);
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.np-artist {
+  margin: 0 0 4px;
+  font-size: 17px;
+  color: var(--text-secondary);
+}
+
+.np-album {
+  margin: 0 0 30px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.np-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.np-bar,
+.np-volume-bar {
+  height: 5px;
+}
+
+.np-volume-bar {
+  width: 180px;
+}
+
+.np-controls {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  margin-top: 26px;
+}
+
+.np-control-btn {
+  padding: 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.np-control-btn:hover {
+  color: var(--text-primary);
+}
+
+.np-control-btn.active {
+  color: var(--accent);
+}
+
+.np-play-btn {
+  width: 58px;
+  height: 58px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.np-play-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.np-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+  color: var(--text-tertiary);
+}
+
+.np-view .queue-count {
+  top: -3px;
+  right: -3px;
+}
+
+@media (max-width: 760px) {
+  .np-stage {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+    gap: 24px;
+  }
+
+  .np-art {
+    justify-self: center;
+    max-width: 240px;
+  }
+
+  .np-controls,
+  .np-volume {
+    justify-content: center;
+  }
+
+  .np-album {
+    margin-bottom: 20px;
+  }
+}

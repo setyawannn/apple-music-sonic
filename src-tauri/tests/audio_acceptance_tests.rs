@@ -15,7 +15,12 @@ static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
 fn temp_file_path(ext: &str) -> PathBuf {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut dir = std::env::temp_dir();
-    dir.push(format!("app_music_test_{}_{}.{}", std::process::id(), id, ext));
+    dir.push(format!(
+        "app_music_test_{}_{}.{}",
+        std::process::id(),
+        id,
+        ext
+    ));
     dir
 }
 
@@ -99,7 +104,11 @@ fn test_pos_01_wav_probe_and_metadata() {
     assert_eq!(rodio::Source::channels(&source), 2);
 
     let dur = source.duration_secs().expect("duration exists");
-    assert!((dur - 2.0).abs() < 0.1, "Duration expected ~2.0s, got {}", dur);
+    assert!(
+        (dur - 2.0).abs() < 0.1,
+        "Duration expected ~2.0s, got {}",
+        dur
+    );
 
     let _ = std::fs::remove_file(&path);
 }
@@ -115,7 +124,7 @@ fn test_pos_02_sample_iteration_bounds() {
         assert!(!sample.is_nan(), "Sample should not be NaN");
         assert!(!sample.is_infinite(), "Sample should not be Infinite");
         assert!(
-            sample >= -1.0 && sample <= 1.0,
+            (-1.0..=1.0).contains(&sample),
             "Sample value {} out of [-1.0, 1.0] bounds",
             sample
         );
@@ -265,7 +274,10 @@ fn test_pos_07_queue_repeat_modes() {
 
     // 1. RepeatMode::Off
     q.set_repeat_mode(RepeatMode::Off);
-    assert!(q.next().is_none(), "Should be None at end of queue in Off mode");
+    assert!(
+        q.next().is_none(),
+        "Should be None at end of queue in Off mode"
+    );
 
     // 2. RepeatMode::All
     q.set_queue(vec![t1.clone(), t2.clone()], Some(1));
@@ -354,7 +366,10 @@ fn test_neg_03_zero_byte_file() {
     let _ = File::create(&path).expect("create 0-byte file");
 
     let res = SymphoniaSource::new(&path);
-    assert!(res.is_err(), "0-byte audio file must fail probing gracefully");
+    assert!(
+        res.is_err(),
+        "0-byte audio file must fail probing gracefully"
+    );
 
     let _ = std::fs::remove_file(&path);
 }

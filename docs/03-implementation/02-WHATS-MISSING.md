@@ -1,30 +1,16 @@
 # Apple Music RS — What's Missing (MVP gaps)
 
-> Last updated: 2026-11-13 (after P1 + P2 shipped, P3 in progress)
+> Last updated: 2026-11-15 (P0–P3 shipped)
+
 > Scope: only what blocks "clone Apple Music". Local file playback is parked, not listed.
 
-**P0, P1 and P2 are done**; **P3 is in progress** (transport state machine, error surface,
-resume-on-launch and keyboard shortcuts are in). Details: `03-TO-DO.md`, `01-WHATS-DONE.md`,
-and `docs/04-bugs/`.
+**P0, P1, P2 and P3 are done.** What is left is Radio (needs Apple's stations API), library
+album grouping (needs a collection id), and playlist track removal (no working endpoint).
+Details: `03-TO-DO.md`, `01-WHATS-DONE.md`, and `docs/04-bugs/`.
 
 ---
 
-## Gap 1 — Windows media keys (P3)
-
-In-app keyboard shortcuts work (Space, arrows, `M`), but the hardware media keys do not:
-they need a global shortcut plugin or a native hook, not a WebView2 key handler.
-
-**Fix.** Add `tauri-plugin-global-shortcut` and bind MediaPlayPause / MediaNextTrack /
-MediaPrevTrack, or register a Win32 hotkey.
-
-## Gap 2 — Now Playing view (P3)
-
-Apple's full-screen Now Playing is not built (the Up Next queue drawer **is**: see the closed
-table). The transport bar shows the queue length and opens the drawer.
-
-**Fix.** A Now Playing view driven by the existing `player-state` plus the `mk_queue` items.
-
-## Gap 3 — Radio has no backend (P3)
+## Gap 1 — Radio has no backend
 
 `renderRadio` is an honest placeholder. Live stations need Apple's stations API
 (`/v1/catalog/{storefront}/stations` plus station playback params), which is not implemented.
@@ -32,7 +18,7 @@ table). The transport bar shows the queue length and opens the drawer.
 **Fix.** Add a `get_stations` command and queue a station id through `stream_play`, or keep the
 placeholder explicit.
 
-## Gap 4 — Removing a track from a playlist
+## Gap 2 — Removing a track from a playlist
 
 Create/rename/delete playlist and add-tracks all work. **Removing** a track does not: Apple
 returns 404 for `DELETE …/tracks/{id}` and for the `relationships/tracks` form, on both
@@ -41,7 +27,7 @@ returns 404 for `DELETE …/tracks/{id}` and for the `relationships/tracks` form
 **Fix.** Find the endpoint Apple's own web client uses (likely a different header set), or
 accept it permanently and say so in the UI.
 
-## Gap 5 — Library album grouping is name-based
+## Gap 3 — Library album grouping is name-based
 
 `deriveLibraryAlbums` keys on `artist + album name` because `StoreSong` carries no collection
 id. Two same-named albums by one artist would merge.
@@ -49,7 +35,7 @@ id. Two same-named albums by one artist would merge.
 **Fix.** Extend the library song parse to keep the collection id/name from Apple's response
 and group on that.
 
-## Gap 6 — Audio ceiling (won't fix on this architecture)
+## Gap 4 — Audio ceiling (won't fix on this architecture)
 
 AAC 256 kbps. Lossless needs either a native CDM integration or a different playback host.
 Out of scope for the MVP; document it in the UI as a known limitation rather than pretending
@@ -71,7 +57,9 @@ otherwise.
 | Welcome screen (P2) | "Scan My Music" local-scanner CTA | Sign-in CTA / Go to Listen Now |
 | Loading/error surface (P3) | Failed songs flipped the icon silently | `streamPhase` state machine, play-button spinner, error toast, 12 s watchdog |
 | Resume on launch (P3) | Only the session survived a restart | `player_state.json` + `player_queue.json`; bar restores paused, play rebuilds the queue |
-| Keyboard (P3) | Mouse only | Space / arrows / `M` (media keys still open) |
+| Keyboard (P3) | Mouse only | Space / arrows / `M` + hardware media keys |
+| Media keys + flyout (P3) | OS media keys did nothing; the Windows flyout showed nothing | SMTC bound to the main window (`player/media.rs`); buttons map to `player_command`, flyout mirrors `player-state` |
+| Now Playing (P3) | No full-screen view | `#now-playing-view` painted from `state.stream*`; opens from the bar artwork/title, `Esc` closes |
 | Queue drawer (P3) | Queue length shown, contents hidden | `mk_queue` cookie (base64) → `player-queue`; Up Next drawer with click-to-jump (verified live: `items=5`) |
 | Playlists (P2.6) | Read-only cards; "New Playlist" wrote to the parked local DB | Library playlists are the real ones; create/rename/delete/add-track write to Apple Music (measured live), local playlist UI removed |
 

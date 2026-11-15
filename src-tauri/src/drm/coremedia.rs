@@ -1,6 +1,6 @@
+use crate::drm::loader::{LoaderError, NativeLibrary};
 use std::path::Path;
 use std::sync::Arc;
-use crate::drm::loader::{NativeLibrary, LoaderError};
 
 pub type FigGetClassIdFn = unsafe extern "C" fn() -> u64;
 
@@ -192,7 +192,10 @@ mod tests {
         let err = CoreMediaBridge::load_from_dir(&bad_path).unwrap_err();
         match err {
             LoaderError::LoadFailed(_, _) => {}
-            other => panic!("Expected LoadFailed for non-existent path, got: {:?}", other),
+            other => panic!(
+                "Expected LoadFailed for non-existent path, got: {:?}",
+                other
+            ),
         }
     }
 }

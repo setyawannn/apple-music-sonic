@@ -11,7 +11,12 @@ impl ArtworkManager {
         Self { cache_dir: dir }
     }
 
-    pub fn save_embedded_art(&self, album_key: &str, data: &[u8], mime: Option<&str>) -> Option<String> {
+    pub fn save_embedded_art(
+        &self,
+        album_key: &str,
+        data: &[u8],
+        mime: Option<&str>,
+    ) -> Option<String> {
         if data.is_empty() {
             return None;
         }

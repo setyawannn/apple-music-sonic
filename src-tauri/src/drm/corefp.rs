@@ -1,7 +1,7 @@
+use crate::drm::loader::{LoaderError, NativeLibrary};
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::Arc;
-use crate::drm::loader::{NativeLibrary, LoaderError};
 
 #[derive(Debug)]
 pub struct CoreFpBridge {
@@ -78,7 +78,11 @@ mod tests {
         if let Ok(install) = AppLocator::new().locate() {
             if let Ok(b) = CoreFpBridge::load_from_dir(&install.install_dir) {
                 for (idx, &ptr) in b.fp_ordinals.iter().enumerate() {
-                    assert!(!ptr.is_null(), "CoreFP ordinal #{} must not be null", idx + 1);
+                    assert!(
+                        !ptr.is_null(),
+                        "CoreFP ordinal #{} must not be null",
+                        idx + 1
+                    );
                 }
             }
         }

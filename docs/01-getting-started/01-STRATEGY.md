@@ -81,7 +81,8 @@ for the probe output and the real cost of the native alternative.
 | Loading spinner / error toast / resume on launch | ✅ works |
 | Keyboard shortcuts | ✅ works (Space, arrows, `M`) |
 | Up Next queue drawer | ✅ works (click to jump) |
-| Windows media keys | ❌ not bound |
+| Windows media keys + flyout | ✅ works (SMTC) |
+| Full-screen Now Playing view | ✅ works |
 | Radio stations | ❌ needs Apple's stations API |
 | Local file playback | ⏸ parked |
 | Native DRM decryption | ⚰ abandoned |
@@ -111,10 +112,12 @@ Play/Shuffle; the welcome screen offers sign-in instead of a folder scan; Browse
 charts. **Playlists are the user's Apple Music playlists** and are two-way: create, rename,
 delete and add-tracks all write to Apple Music (the local playlist DB is no longer used).
 
-**P3 — Polish. 🚧 IN PROGRESS (2026-11-13).**
+**P3 — Polish. ✅ DONE (2026-11-15).**
 Loading spinner and error toast (transport state machine), resume-last-song on launch, in-app
-keyboard shortcuts and the Up Next queue drawer are in. Windows media keys and a full-screen
-Now Playing view remain.
+keyboard shortcuts, the Up Next queue drawer, **Windows media keys and the now-playing flyout**
+(bound to the main window with SMTC — no plugin), and a **full-screen Now Playing view** that
+mirrors the transport bar rather than owning state. Radio remains out (needs Apple's stations
+API); that is not polish, it is a missing backend.
 
 **P4 — Revisit parked work.**
 Decide: develop local file playback, or delete it. Only after P0–P3.

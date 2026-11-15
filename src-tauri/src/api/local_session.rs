@@ -32,7 +32,10 @@ impl LocalSessionReader {
     }
 
     /// Extract session data from specified Cookies SQLite database
-    pub fn extract_from_cookies_db(&self, db_path: &Path) -> Result<LocalAppleSession, SessionError> {
+    pub fn extract_from_cookies_db(
+        &self,
+        db_path: &Path,
+    ) -> Result<LocalAppleSession, SessionError> {
         if !db_path.exists() {
             return Err(SessionError::NotFound(db_path.to_path_buf()));
         }
@@ -98,7 +101,10 @@ impl LocalSessionReader {
     }
 
     /// Extract session by navigating from Apple Music LocalState folder
-    pub fn extract_from_local_state(&self, local_state_dir: &Path) -> Result<LocalAppleSession, SessionError> {
+    pub fn extract_from_local_state(
+        &self,
+        local_state_dir: &Path,
+    ) -> Result<LocalAppleSession, SessionError> {
         let cookie_path = local_state_dir
             .join("EBWebView")
             .join("Default")
@@ -201,7 +207,8 @@ mod tests {
     use std::fs;
 
     fn create_mock_cookies_db(entries: &[(&str, &str, &str)]) -> PathBuf {
-        let db_path = std::env::temp_dir().join(format!("mock_cookies_{}.sqlite", uuid::Uuid::new_v4()));
+        let db_path =
+            std::env::temp_dir().join(format!("mock_cookies_{}.sqlite", uuid::Uuid::new_v4()));
         let conn = Connection::open(&db_path).expect("open mock cookies db");
 
         conn.execute(
@@ -248,15 +255,24 @@ mod tests {
     #[test]
     fn test_ses_pos_01_read_cookies_from_isolated_mock() {
         let db = create_mock_cookies_db(&[
-            (".apple.com", "media-user-token", "test_mut_sample_token_12345"),
+            (
+                ".apple.com",
+                "media-user-token",
+                "test_mut_sample_token_12345",
+            ),
             (".apple.com", "itctx", "sample_itctx_value"),
             (".apple.com", "x-apple-store-front", "143476-2,42"),
         ]);
 
         let reader = LocalSessionReader::new();
-        let session = reader.extract_from_cookies_db(&db).expect("extract cookies");
+        let session = reader
+            .extract_from_cookies_db(&db)
+            .expect("extract cookies");
 
-        assert_eq!(session.media_user_token.as_deref(), Some("test_mut_sample_token_12345"));
+        assert_eq!(
+            session.media_user_token.as_deref(),
+            Some("test_mut_sample_token_12345")
+        );
         assert_eq!(session.itctx.as_deref(), Some("sample_itctx_value"));
         assert_eq!(session.storefront.as_deref(), Some("143476-2,42"));
         assert_eq!(session.all_cookies.len(), 3);
@@ -272,7 +288,9 @@ mod tests {
         let _open_conn = Connection::open(&db).expect("open concurrent conn");
 
         let reader = LocalSessionReader::new();
-        let session = reader.extract_from_cookies_db(&db).expect("extract with open handle");
+        let session = reader
+            .extract_from_cookies_db(&db)
+            .expect("extract with open handle");
 
         assert_eq!(session.itctx.as_deref(), Some("active_session"));
 
@@ -290,13 +308,21 @@ mod tests {
         ]);
 
         let reader = LocalSessionReader::new();
-        let session = reader.extract_from_cookies_db(&db).expect("extract filtered cookies");
+        let session = reader
+            .extract_from_cookies_db(&db)
+            .expect("extract filtered cookies");
 
         assert_eq!(session.media_user_token.as_deref(), Some("val_mut"));
         assert_eq!(session.all_cookies.len(), 2);
         assert!(session.all_cookies.iter().any(|(n, _)| n == "apple_cookie"));
-        assert!(session.all_cookies.iter().any(|(n, _)| n == "media-user-token"));
-        assert!(!session.all_cookies.iter().any(|(n, _)| n == "google_cookie"));
+        assert!(session
+            .all_cookies
+            .iter()
+            .any(|(n, _)| n == "media-user-token"));
+        assert!(!session
+            .all_cookies
+            .iter()
+            .any(|(n, _)| n == "google_cookie"));
 
         let _ = fs::remove_file(&db);
     }
@@ -305,7 +331,10 @@ mod tests {
     fn test_ses_pos_04_auto_detection_from_local_state_dir() {
         let unique = uuid::Uuid::new_v4();
         let mock_local_state = std::env::temp_dir().join(format!("MockLocalState_{}", unique));
-        let network_dir = mock_local_state.join("EBWebView").join("Default").join("Network");
+        let network_dir = mock_local_state
+            .join("EBWebView")
+            .join("Default")
+            .join("Network");
         fs::create_dir_all(&network_dir).expect("create network dir");
 
         let db = network_dir.join("Cookies");
@@ -323,7 +352,9 @@ mod tests {
         drop(conn);
 
         let reader = LocalSessionReader::new();
-        let session = reader.extract_from_local_state(&mock_local_state).expect("extract from hierarchy");
+        let session = reader
+            .extract_from_local_state(&mock_local_state)
+            .expect("extract from hierarchy");
 
         assert_eq!(session.itctx.as_deref(), Some("auto_detected_itctx"));
 
@@ -345,7 +376,8 @@ mod tests {
 
     #[test]
     fn test_ses_neg_02_corrupted_sqlite_database_file() {
-        let bad_file = std::env::temp_dir().join(format!("corrupt_{}.sqlite", uuid::Uuid::new_v4()));
+        let bad_file =
+            std::env::temp_dir().join(format!("corrupt_{}.sqlite", uuid::Uuid::new_v4()));
         fs::write(&bad_file, b"THIS_IS_NOT_A_VALID_SQLITE_HEADER").expect("write garbage");
 
         let reader = LocalSessionReader::new();
@@ -379,7 +411,8 @@ mod tests {
     fn test_ses_neg_04_missing_cookies_table_schema() {
         let db = std::env::temp_dir().join(format!("wrong_schema_{}.sqlite", uuid::Uuid::new_v4()));
         let conn = Connection::open(&db).expect("create wrong schema db");
-        conn.execute("CREATE TABLE wrong_table (id INTEGER)", []).expect("create table");
+        conn.execute("CREATE TABLE wrong_table (id INTEGER)", [])
+            .expect("create table");
         drop(conn);
 
         let reader = LocalSessionReader::new();

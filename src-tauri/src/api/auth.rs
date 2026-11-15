@@ -53,7 +53,8 @@ impl AuthManager {
     }
 
     pub fn in_memory() -> Self {
-        let temp_file = std::env::temp_dir().join(format!("test_session_{}.json", uuid::Uuid::new_v4()));
+        let temp_file =
+            std::env::temp_dir().join(format!("test_session_{}.json", uuid::Uuid::new_v4()));
         Self {
             session_file: temp_file,
             session: Mutex::new(UserSession::default()),
@@ -83,7 +84,9 @@ impl AuthManager {
     pub fn set_user_token(&self, token: Option<String>) -> anyhow::Result<()> {
         {
             let mut session = self.session.lock().unwrap();
-            session.music_user_token = token.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+            session.music_user_token = token
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty());
         }
         self.save_to_disk()
     }
@@ -146,7 +149,14 @@ impl AuthManager {
             .timeout(std::time::Duration::from_secs(6))
             .build()
             .ok()?;
-        let html = client.get("https://music.apple.com/us/browse").send().await.ok()?.text().await.ok()?;
+        let html = client
+            .get("https://music.apple.com/us/browse")
+            .send()
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
         let idx = html.find("/assets/index~")?;
         let end_idx = html[idx..].find(".js")?;
         let js_path = &html[idx..idx + end_idx + 3];

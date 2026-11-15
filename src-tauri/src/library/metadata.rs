@@ -36,8 +36,8 @@ pub fn extract_metadata<P: AsRef<Path>>(path: P) -> anyhow::Result<ExtractedMeta
     };
     let meta_opts = MetadataOptions::default();
 
-    let mut probed = symphonia::default::get_probe()
-        .format(&hint, mss, &format_opts, &meta_opts)?;
+    let mut probed =
+        symphonia::default::get_probe().format(&hint, mss, &format_opts, &meta_opts)?;
 
     let mut meta = ExtractedMetadata {
         title: path
@@ -75,7 +75,9 @@ pub fn extract_metadata<P: AsRef<Path>>(path: P) -> anyhow::Result<ExtractedMeta
                 StandardTagKey::Album => meta.album = value_to_string(&tag.value),
                 StandardTagKey::AlbumArtist => meta.album_artist = value_to_string(&tag.value),
                 StandardTagKey::TrackNumber => meta.track_number = parse_int_or_split(&tag.value),
-                StandardTagKey::DiscNumber => meta.disc_number = parse_int_or_split(&tag.value).max(1),
+                StandardTagKey::DiscNumber => {
+                    meta.disc_number = parse_int_or_split(&tag.value).max(1)
+                }
                 StandardTagKey::Genre => meta.genre = value_to_string(&tag.value),
                 StandardTagKey::ReleaseDate => {
                     meta.year = parse_year(&value_to_string(&tag.value));

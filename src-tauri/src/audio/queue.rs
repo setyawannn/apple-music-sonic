@@ -92,6 +92,11 @@ impl QueueManager {
         }
     }
 
+    /// Advance to the following track, honouring repeat mode.
+    ///
+    /// Named after the transport vocabulary, not `Iterator::next`; the queue is a
+    /// mutable cursor with side effects, not an iterator.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Track> {
         if self.tracks.is_empty() {
             return None;

@@ -26,12 +26,16 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 
 ## Quick facts
 
-- **23 Rust files, ~5,600 lines**, **58 Tauri commands** registered in `generate_handler!`
+- **34 Rust files, ~6,150 lines**, **58 Tauri commands** registered in `generate_handler!`
 - **~20 MB** release binary; RAM target **~80 MB** (not yet measured — treat old claims as aspirational)
-- Frontend: `index.html`, `src/js/app.js` (2,357 lines), `src/styles/app.css` (1,407 lines)
+- Frontend: `index.html`, `src/js/app.js` (2,628 lines), `src/styles/app.css` (1,643 lines)
 - Streaming works: hidden MusicKit WebView2 + Windows PlayReady CDM
 - Playback state works: page writes a cookie, Rust polls the cookie jar, emits `player-state`
 - Auth works: developer token scraped from Apple's web bundle + `media-user-token` cookie
+- Media keys and the Windows now-playing flyout work: SMTC is bound to the main window
+  and fed from the same `player-state` blob
+- Standards: `cargo fmt` (`rustfmt.toml`, 100 columns), clippy `all` clean, every command
+  returns `AppResult<T>` (typed `AppError`, serialized as a plain message)
 
 ## How streaming works (the one architecture fact that matters)
 
@@ -126,6 +130,18 @@ decoder cannot help. Do not promise lossless without reading
   the persisted volume — so an unguarded subframe publishes an empty `mk_state` that fights the
   real one and flickers the UI. The bootstrap starts with `if (window.top !== window.self) return;`.
   See `docs/04-bugs/07-SUBFRAME-STATE-FLICKER.md`.
+- **Media keys come from SMTC, not a global-shortcut plugin.** `player/media.rs` binds
+  `ISystemMediaTransportControlsInterop` to the main window and turns OS button events into the
+  same `player_command`s the UI sends; the flyout is fed from `player-state`. Two traps:
+  the interface is **missing from the `windows` metadata**, so its GUID/layout is declared by
+  hand (`InteropVtbl`, slot 7 of 7), and it must be activated **by the interop IID** — asking
+  `RoGetActivationFactory` for `IUnknown` returns the object's primary vtable and reading a
+  fixed slot from it crashes the process (`0xc0000005`, observed). Registration failure is
+  logged and non-fatal.
+- **The full-screen Now Playing view is a mirror, never a second source of truth**
+  (`#now-playing-view` in `index.html`, `paintNowPlaying()` in `app.js`). It is painted from
+  `state.stream*`, which `applyPlayerState` fills; its buttons forward to the transport bar's
+  own handlers, and `seekToFraction` / `setVolumeFraction` are shared by both bars.
 - **A null-id `player-state` is a blip, not truth.** The frontend debounces empty reports (clears
   the bar only after 1.5 s with no real report), because MusicKit briefly reports no item even
   for the top frame. `applyPlayerState` / `clearNowPlayingUI` in `app.js`.
@@ -151,17 +167,29 @@ decoder cannot help. Do not promise lossless without reading
 
 | Path | Purpose |
 |------|---------|
-| `src-tauri/src/lib.rs` (1,450) | 58 commands, hidden player + bootstrap script (queue, transport, publish, Up Next), cookie state poller (+ restore persistence), playlist write commands, auth windows, lifecycle |
-| `src-tauri/src/api/auth.rs` (166) | Developer token, session persistence, storefront |
-| `src-tauri/src/api/client.rs` (662) | REST client: search, album, charts, library, playlists (read **and** create/rename/delete/add-tracks) |
-| `src-tauri/src/api/local_session.rs` (397) | Imports session from WebView2 cookie SQLite |
-| `src-tauri/src/api/models.rs` (101) | Store models |
+| `src-tauri/src/lib.rs` (147) | module wiring, `generate_handler!` (58 commands), `run()` + window lifecycle |
+| `src-tauri/src/error.rs` (88) | typed `AppError` / `AppResult`; serialized as a plain message at the IPC boundary |
+| `src-tauri/src/state.rs` (29) | `AppState` + the poison-safe `library()` accessor |
+| `src-tauri/src/commands/local.rs` (263) | **PARKED** local-file commands (engine + SQLite) |
+| `src-tauri/src/commands/auth.rs` (156) | sign-in window, session persistence, storefront |
+| `src-tauri/src/commands/catalog.rs` (46) | catalog browse, search, iCloud library |
+| `src-tauri/src/commands/playlist.rs` (91) | Apple Music playlist read + write |
+| `src-tauri/src/commands/diagnostics.rs` (140) | native-bridge diagnostics for the abandoned DRM path |
+| `src-tauri/src/player/mod.rs` (304) | hidden player window, command dispatch, `mk_state`/`mk_queue` poller, restore persistence |
+| `src-tauri/src/player/bootstrap.js` (179) | page-side MusicKit bootstrap (queue, transport, publish, Up Next) |
+| `src-tauri/src/player/cookie.rs` (86) | percent/base64 codecs for the cookie state channel |
+| `src-tauri/src/player/media.rs` (266) | Windows media keys + SMTC flyout (hand-declared interop, metadata mirror) |
+| `src-tauri/src/api/auth.rs` (155) | Developer token, session persistence, storefront |
+| `src-tauri/src/api/client.rs` (620) | REST client: search, album, charts, library, playlists (read **and** create/rename/delete/add-tracks) |
+| `src-tauri/src/api/local_session.rs` (367) | Imports session from WebView2 cookie SQLite |
+| `src-tauri/src/api/models.rs` (90) | Store models |
 | `src-tauri/src/audio/**` (1,071) | **PARKED** local engine |
-| `src-tauri/src/library/**` (1,006) | **PARKED** local library + SQLite |
-| `src-tauri/src/drm/**` (1,538) | **ABANDONED** native decrypt attempt (diagnostics only) |
+| `src-tauri/src/library/**` (~1,030) | **PARKED** local library + SQLite |
+| `src-tauri/src/drm/**` (~1,545) | **ABANDONED** native decrypt attempt (diagnostics only) |
+| `src-tauri/rustfmt.toml` | width/edition standard; `cargo fmt` is expected before every commit |
 | `src-tauri/capabilities/player.json` | Remote capability for the `player` webview |
-| `src/js/app.js` (2,357) | All UI logic (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, playlist read/write, keyboard shortcuts, resume) |
-| `src/styles/app.css` (1,407) | Apple-style dark theme |
+| `src/js/app.js` (2,628) | All UI logic (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, full-screen Now Playing, playlist read/write, keyboard shortcuts, resume) |
+| `src/styles/app.css` (1,643) | Apple-style dark theme, including the Now Playing view |
 
 ## Docs map
 

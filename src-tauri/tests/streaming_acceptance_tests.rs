@@ -14,7 +14,9 @@ async fn spawn_mock_stream_server<F>(handler: F) -> (String, Sender<()>)
 where
     F: Fn(&str, &str) -> (u16, &'static str, Vec<u8>) + Send + Sync + 'static,
 {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock server");
     let addr = listener.local_addr().unwrap();
     let (tx, mut rx) = channel();
     let handler = Arc::new(handler);
@@ -82,7 +84,8 @@ fn create_test_wav_bytes(duration_ms: u32) -> Vec<u8> {
     buf.extend_from_slice(&data_chunk_size.to_le_bytes());
 
     for i in 0..num_samples {
-        let sample = ((i as f64 * 440.0 * 2.0 * std::f64::consts::PI / sample_rate as f64).sin() * 10000.0) as i16;
+        let sample = ((i as f64 * 440.0 * 2.0 * std::f64::consts::PI / sample_rate as f64).sin()
+            * 10000.0) as i16;
         buf.extend_from_slice(&sample.to_le_bytes());
         buf.extend_from_slice(&sample.to_le_bytes());
     }
@@ -111,7 +114,10 @@ aac_64k.m3u8
     assert_eq!(variants[0].bandwidth, 980000);
     assert!(variants[0].is_alac);
     assert!(variants[0].is_lossless);
-    assert_eq!(variants[0].uri, "https://audio-ssl.itunes.apple.com/alac_lossless.m3u8");
+    assert_eq!(
+        variants[0].uri,
+        "https://audio-ssl.itunes.apple.com/alac_lossless.m3u8"
+    );
 
     assert_eq!(variants[1].bandwidth, 256000);
     assert!(!variants[1].is_alac);
@@ -135,7 +141,10 @@ segment_2.m4a
 
     assert_eq!(segments.len(), 3);
     assert!((segments[0].duration_secs - 5.892).abs() < 0.001);
-    assert_eq!(segments[0].uri, "https://audio-ssl.itunes.apple.com/stream/segment_0.m4a");
+    assert_eq!(
+        segments[0].uri,
+        "https://audio-ssl.itunes.apple.com/stream/segment_0.m4a"
+    );
     assert!((segments[2].duration_secs - 4.120).abs() < 0.001);
 }
 
@@ -146,8 +155,14 @@ fn test_stream_pos_03_relative_url_resolution() {
     let rel2 = "/root_audio.m4a";
     let abs = "https://cdn.apple.com/full_track.m4a";
 
-    assert_eq!(HlsParser::resolve_url(base, rel1), "https://audio-ssl.itunes.apple.com/assets/2026/audio_01.m4a");
-    assert_eq!(HlsParser::resolve_url(base, rel2), "https://audio-ssl.itunes.apple.com/root_audio.m4a");
+    assert_eq!(
+        HlsParser::resolve_url(base, rel1),
+        "https://audio-ssl.itunes.apple.com/assets/2026/audio_01.m4a"
+    );
+    assert_eq!(
+        HlsParser::resolve_url(base, rel2),
+        "https://audio-ssl.itunes.apple.com/root_audio.m4a"
+    );
     assert_eq!(HlsParser::resolve_url(base, abs), abs);
 }
 
@@ -169,12 +184,18 @@ async fn test_stream_pos_04_stream_cache_atomic_write_and_read() {
     let client = reqwest::Client::new();
     let stream_url = format!("{}/stream_test.m4a", server_url);
 
-    let path = cache.download_to_cache(&client, "track_123", &stream_url).await.expect("download to cache");
+    let path = cache
+        .download_to_cache(&client, "track_123", &stream_url)
+        .await
+        .expect("download to cache");
     assert!(path.exists());
     assert!(cache.is_cached("track_123"));
 
     // Second call should return instantly from cache without network
-    let cached_path = cache.download_to_cache(&client, "track_123", &stream_url).await.expect("from cache");
+    let cached_path = cache
+        .download_to_cache(&client, "track_123", &stream_url)
+        .await
+        .expect("from cache");
     assert_eq!(path, cached_path);
 }
 
@@ -241,7 +262,10 @@ fn test_stream_pos_06_cloud_playlist_json_parsing() {
     let playlist = parse_single_playlist_json(&raw_json);
     assert_eq!(playlist.id, "p.V83kL9");
     assert_eq!(playlist.name, "Summer Acoustic Hits");
-    assert_eq!(playlist.description.as_deref(), Some("Relaxing acoustic favorites for summer afternoons."));
+    assert_eq!(
+        playlist.description.as_deref(),
+        Some("Relaxing acoustic favorites for summer afternoons.")
+    );
     assert!(playlist.can_edit);
     assert_eq!(playlist.track_count, 18);
     assert_eq!(playlist.tracks.len(), 1);
@@ -277,7 +301,10 @@ fn test_stream_pos_07_cloud_playlist_tracks_parsing() {
     assert_eq!(song.duration_ms, 243000);
     assert!(song.has_lossless);
     assert!(song.has_atmos);
-    assert_eq!(song.preview_url.as_deref(), Some("https://audio-ssl.itunes.apple.com/preview_midnight.m4a"));
+    assert_eq!(
+        song.preview_url.as_deref(),
+        Some("https://audio-ssl.itunes.apple.com/preview_midnight.m4a")
+    );
 }
 
 #[test]
@@ -312,10 +339,8 @@ async fn test_stream_neg_01_empty_stream_url() {
 
 #[tokio::test]
 async fn test_stream_neg_02_server_404_not_found() {
-    let (server_url, _tx) = spawn_mock_stream_server(|_, _| {
-        (404, "text/plain", b"Audio chunk missing".to_vec())
-    })
-    .await;
+    let (server_url, _tx) =
+        spawn_mock_stream_server(|_, _| (404, "text/plain", b"Audio chunk missing".to_vec())).await;
 
     let cache = StreamCache::in_temp_dir();
     let client = reqwest::Client::new();
@@ -329,7 +354,11 @@ async fn test_stream_neg_02_server_404_not_found() {
 #[tokio::test]
 async fn test_stream_neg_03_server_403_forbidden() {
     let (server_url, _tx) = spawn_mock_stream_server(|_, _| {
-        (403, "application/json", b"{\"error\":\"Forbidden stream token\"}".to_vec())
+        (
+            403,
+            "application/json",
+            b"{\"error\":\"Forbidden stream token\"}".to_vec(),
+        )
     })
     .await;
 
@@ -354,16 +383,15 @@ fn test_stream_neg_04_corrupted_hls_m3u8_content() {
 
 #[tokio::test]
 async fn test_stream_neg_05_zero_byte_stream_response() {
-    let (server_url, _tx) = spawn_mock_stream_server(|_, _| {
-        (200, "audio/mp4", Vec::new())
-    })
-    .await;
+    let (server_url, _tx) = spawn_mock_stream_server(|_, _| (200, "audio/mp4", Vec::new())).await;
 
     let cache = StreamCache::in_temp_dir();
     let client = reqwest::Client::new();
     let url = format!("{}/empty.m4a", server_url);
 
-    let res = cache.download_to_cache(&client, "track_zero_bytes", &url).await;
+    let res = cache
+        .download_to_cache(&client, "track_zero_bytes", &url)
+        .await;
     assert!(res.is_err());
     assert!(res.unwrap_err().contains("empty"));
     assert!(!cache.is_cached("track_zero_bytes"));
@@ -394,10 +422,8 @@ async fn test_stream_neg_08_rapid_stream_cache_concurrency() {
     let fake_audio = create_test_wav_bytes(20);
     let fake_audio_clone = fake_audio.clone();
 
-    let (server_url, _tx) = spawn_mock_stream_server(move |_, _| {
-        (200, "audio/wav", fake_audio_clone.clone())
-    })
-    .await;
+    let (server_url, _tx) =
+        spawn_mock_stream_server(move |_, _| (200, "audio/wav", fake_audio_clone.clone())).await;
 
     let cache = Arc::new(StreamCache::in_temp_dir());
     let client = reqwest::Client::new();
@@ -411,7 +437,9 @@ async fn test_stream_neg_08_rapid_stream_cache_concurrency() {
         let track_id = format!("track_concurrent_{}", i % 3);
 
         handles.push(tokio::spawn(async move {
-            cache_clone.download_to_cache(&client_clone, &track_id, &url_clone).await
+            cache_clone
+                .download_to_cache(&client_clone, &track_id, &url_clone)
+                .await
         }));
     }
 

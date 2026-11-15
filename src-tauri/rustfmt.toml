@@ -1,0 +1,8 @@
+# Formatting and lint standards for this crate.
+#
+# The project style is `cargo fmt` with a hard 100-column budget: wide enough for
+# idiomatic chained calls, narrow enough to read side-by-side.
+max_width = 100
+edition = "2021"
+use_small_heuristics = "Default"
+newline_style = "Unix"

@@ -89,10 +89,17 @@ fn test_lib_pos_01_db_initialization_and_schema() {
 #[test]
 fn test_lib_pos_02_track_crud_lifecycle() {
     let db = Database::in_memory().expect("in-memory db");
-    let mut track = make_track("t1", "Bohemian Rhapsody", "Queen", "A Night at the Opera", "C:\\queen.mp3");
+    let mut track = make_track(
+        "t1",
+        "Bohemian Rhapsody",
+        "Queen",
+        "A Night at the Opera",
+        "C:\\queen.mp3",
+    );
 
     // Insert
-    db.insert_or_replace_track(&track, 1000).expect("insert track");
+    db.insert_or_replace_track(&track, 1000)
+        .expect("insert track");
     assert_eq!(db.get_all_tracks().unwrap().len(), 1);
 
     // Read by ID
@@ -102,12 +109,14 @@ fn test_lib_pos_02_track_crud_lifecycle() {
 
     // Update
     track.genre = "Classic Rock".to_string();
-    db.insert_or_replace_track(&track, 1001).expect("update track");
+    db.insert_or_replace_track(&track, 1001)
+        .expect("update track");
     let updated = db.get_track_by_id("t1").unwrap().unwrap();
     assert_eq!(updated.genre, "Classic Rock");
 
     // Delete
-    db.delete_track_by_path(&track.file_path).expect("delete track");
+    db.delete_track_by_path(&track.file_path)
+        .expect("delete track");
     assert!(db.get_track_by_id("t1").unwrap().is_none());
 }
 
@@ -136,7 +145,10 @@ fn test_lib_pos_03_album_and_artist_aggregation() {
 
 #[test]
 fn test_lib_pos_04_incremental_scanner_performance() {
-    let temp_dir = std::env::temp_dir().join(format!("scan_test_{}", COUNTER.fetch_add(1, Ordering::SeqCst)));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "scan_test_{}",
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
     let wav1 = temp_dir.join("track1.wav");
@@ -157,7 +169,10 @@ fn test_lib_pos_04_incremental_scanner_performance() {
     let duration = start.elapsed();
 
     assert_eq!(count2, 2);
-    assert!(duration.as_millis() < 100, "Incremental scan should complete under 100ms");
+    assert!(
+        duration.as_millis() < 100,
+        "Incremental scan should complete under 100ms"
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
@@ -177,12 +192,19 @@ fn test_lib_pos_05_metadata_tag_extraction() {
 
 #[test]
 fn test_lib_pos_06_embedded_artwork_cache() {
-    let art_dir = std::env::temp_dir().join(format!("art_test_{}", COUNTER.fetch_add(1, Ordering::SeqCst)));
+    let art_dir = std::env::temp_dir().join(format!(
+        "art_test_{}",
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
     let art_mgr = ArtworkManager::new(&art_dir);
 
     let dummy_image_bytes = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46]; // JPEG header
     let cached_path = art_mgr
-        .save_embedded_art("Abbey Road - The Beatles", &dummy_image_bytes, Some("image/jpeg"))
+        .save_embedded_art(
+            "Abbey Road - The Beatles",
+            &dummy_image_bytes,
+            Some("image/jpeg"),
+        )
         .expect("save art");
 
     assert!(Path::new(&cached_path).exists());
@@ -272,10 +294,14 @@ fn test_lib_neg_02_duplicate_file_path_rescan() {
 fn test_lib_neg_03_corrupted_playlist_file_import() {
     let bad_path = temp_path("m3u");
     let mut file = File::create(&bad_path).unwrap();
-    file.write_all(b"### NOT A VALID PLAYLIST\n\n#EXTM3U\n").unwrap();
+    file.write_all(b"### NOT A VALID PLAYLIST\n\n#EXTM3U\n")
+        .unwrap();
 
     let paths = PlaylistFileHelper::import_m3u8(&bad_path).unwrap();
-    assert!(paths.is_empty(), "Empty/comment-only playlist should yield empty list safely");
+    assert!(
+        paths.is_empty(),
+        "Empty/comment-only playlist should yield empty list safely"
+    );
 
     let _ = std::fs::remove_file(&bad_path);
 }
@@ -291,7 +317,9 @@ fn test_lib_neg_04_playlist_with_missing_track_files() {
     writeln!(file, "#EXTM3U\nZ:\\missing_track_123.mp3").unwrap();
 
     // Import playlist referring to missing file: shouldn't panic, creates empty playlist
-    let pl = lib.import_playlist_file(&m3u).expect("import missing file playlist");
+    let pl = lib
+        .import_playlist_file(&m3u)
+        .expect("import missing file playlist");
     assert_eq!(pl.tracks.len(), 0);
 
     let _ = std::fs::remove_file(&m3u);
@@ -333,9 +361,16 @@ fn test_lib_neg_06_prune_deleted_files_on_rescan() {
 fn test_lib_neg_07_special_characters_in_metadata() {
     let db = Database::in_memory().unwrap();
     let tricky_title = "夜に駆ける 'YOASOBI' / \"Run into the night\" -- 🎶 (Special & <Tag>)";
-    let track = make_track("jp1", tricky_title, "YOASOBI", "THE BOOK", "C:\\yoasobi.mp3");
+    let track = make_track(
+        "jp1",
+        tricky_title,
+        "YOASOBI",
+        "THE BOOK",
+        "C:\\yoasobi.mp3",
+    );
 
-    db.insert_or_replace_track(&track, 1).expect("insert unicode");
+    db.insert_or_replace_track(&track, 1)
+        .expect("insert unicode");
     let fetched = db.get_track_by_id("jp1").unwrap().unwrap();
     assert_eq!(fetched.title, tricky_title);
 }
@@ -363,5 +398,9 @@ fn test_lib_neg_08_concurrent_db_read_write() {
     }
 
     let all = db.get_all_tracks().unwrap();
-    assert_eq!(all.len(), 200, "All 200 concurrent tracks should be written without data loss");
+    assert_eq!(
+        all.len(),
+        200,
+        "All 200 concurrent tracks should be written without data loss"
+    );
 }

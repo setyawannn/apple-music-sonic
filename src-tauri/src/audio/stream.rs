@@ -21,7 +21,9 @@ pub struct HlsParser;
 
 impl HlsParser {
     pub fn is_hls(content_or_url: &str) -> bool {
-        content_or_url.contains("#EXTM3U") || content_or_url.ends_with(".m3u8") || content_or_url.contains(".m3u8?")
+        content_or_url.contains("#EXTM3U")
+            || content_or_url.ends_with(".m3u8")
+            || content_or_url.contains(".m3u8?")
     }
 
     pub fn resolve_url(base_url: &str, relative: &str) -> String {
@@ -57,9 +59,8 @@ impl HlsParser {
         let mut is_lossless = false;
 
         for line in content.lines().map(|l| l.trim()).filter(|l| !l.is_empty()) {
-            if line.starts_with("#EXT-X-STREAM-INF:") {
+            if let Some(info) = line.strip_prefix("#EXT-X-STREAM-INF:") {
                 has_stream_inf = true;
-                let info = &line["#EXT-X-STREAM-INF:".len()..];
                 for part in info.split(',') {
                     let mut kv = part.splitn(2, '=');
                     if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
@@ -96,7 +97,7 @@ impl HlsParser {
         }
 
         // Sort by highest bandwidth (best quality) first
-        variants.sort_by(|a, b| b.bandwidth.cmp(&a.bandwidth));
+        variants.sort_by_key(|v| std::cmp::Reverse(v.bandwidth));
         variants
     }
 
@@ -110,9 +111,8 @@ impl HlsParser {
         let mut current_duration = 0.0f64;
 
         for line in content.lines().map(|l| l.trim()).filter(|l| !l.is_empty()) {
-            if line.starts_with("#EXTINF:") {
+            if let Some(info) = line.strip_prefix("#EXTINF:") {
                 has_inf = true;
-                let info = &line["#EXTINF:".len()..];
                 let dur_str = info.split(',').next().unwrap_or("0");
                 current_duration = dur_str.trim().parse::<f64>().unwrap_or(0.0);
             } else if !line.starts_with('#') && has_inf {
@@ -154,7 +154,8 @@ impl StreamCache {
     }
 
     pub fn in_temp_dir() -> Self {
-        let path = std::env::temp_dir().join(format!("apple_music_stream_{}", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("apple_music_stream_{}", uuid::Uuid::new_v4()));
         let _ = fs::create_dir_all(&path);
         Self {
             cache_dir: path,
@@ -165,7 +166,13 @@ impl StreamCache {
     pub fn get_track_cache_path(&self, track_id: &str) -> PathBuf {
         let sanitized: String = track_id
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         self.cache_dir.join(format!("{}.m4a", sanitized))
     }
@@ -197,7 +204,10 @@ impl StreamCache {
             .map_err(|e| format!("Failed to initiate stream request: {}", e))?;
 
         if !resp.status().is_success() {
-            return Err(format!("Stream server returned error HTTP {}", resp.status()));
+            return Err(format!(
+                "Stream server returned error HTTP {}",
+                resp.status()
+            ));
         }
 
         let bytes = resp

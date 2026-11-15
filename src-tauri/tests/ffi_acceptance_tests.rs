@@ -34,7 +34,8 @@ impl Drop for EnvGuard {
 }
 
 fn create_mock_cookies_db(entries: &[(&str, &str, &str)]) -> PathBuf {
-    let db_path = std::env::temp_dir().join(format!("mock_ffi_cookies_{}.sqlite", uuid::Uuid::new_v4()));
+    let db_path =
+        std::env::temp_dir().join(format!("mock_ffi_cookies_{}.sqlite", uuid::Uuid::new_v4()));
     let conn = Connection::open(&db_path).expect("open mock cookies db");
 
     conn.execute(
@@ -73,10 +74,17 @@ fn test_ffi_pos_01_app_package_auto_detection() {
     let res = locator.locate();
     if let Ok(install) = res {
         assert!(install.install_dir.exists(), "Installation dir must exist");
-        assert!(install.local_state_dir.exists(), "LocalState dir must exist");
+        assert!(
+            install.local_state_dir.exists(),
+            "LocalState dir must exist"
+        );
         assert!(!install.version.is_empty(), "Version must not be empty");
-        assert!(install.available_dlls.contains(&"CoreAudioToolbox.dll".to_string()));
-        assert!(install.available_dlls.contains(&"CoreMedia.dll".to_string()));
+        assert!(install
+            .available_dlls
+            .contains(&"CoreAudioToolbox.dll".to_string()));
+        assert!(install
+            .available_dlls
+            .contains(&"CoreMedia.dll".to_string()));
         assert!(install.available_dlls.contains(&"CoreFP.dll".to_string()));
     }
 }
@@ -89,8 +97,13 @@ fn test_ffi_pos_02_sqlite_cookie_extraction_immutable() {
     ]);
 
     let reader = LocalSessionReader::new();
-    let session = reader.extract_from_cookies_db(&temp_db).expect("read cookies");
-    assert_eq!(session.media_user_token.as_deref(), Some("mut_sample_token_xyz"));
+    let session = reader
+        .extract_from_cookies_db(&temp_db)
+        .expect("read cookies");
+    assert_eq!(
+        session.media_user_token.as_deref(),
+        Some("mut_sample_token_xyz")
+    );
     assert_eq!(session.itctx.as_deref(), Some("sample_itctx_value"));
 
     let _ = fs::remove_file(&temp_db);
@@ -103,7 +116,8 @@ fn test_ffi_pos_03_native_library_loader_and_memory() {
     let mem_after = get_current_process_memory().expect("get memory after");
 
     let sym: libloading::Symbol<unsafe extern "system" fn() -> u32> = unsafe {
-        lib.get_symbol(b"GetCurrentProcessId\0").expect("get GetCurrentProcessId")
+        lib.get_symbol(b"GetCurrentProcessId\0")
+            .expect("get GetCurrentProcessId")
     };
     let pid = unsafe { sym() };
     assert_eq!(pid, std::process::id());
@@ -191,7 +205,8 @@ fn test_ffi_neg_01_system_not_installed() {
 
 #[test]
 fn test_ffi_neg_02_missing_critical_dlls() {
-    let temp_dir = std::env::temp_dir().join(format!("partial_apple_dlls_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("partial_apple_dlls_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
     // Only create CoreAudioToolbox.dll, miss CoreMedia and CoreFP
@@ -223,7 +238,8 @@ fn test_ffi_neg_03_sqlite_database_not_found() {
 
 #[test]
 fn test_ffi_neg_04_sqlite_corrupted_payload() {
-    let temp_file = std::env::temp_dir().join(format!("corrupt_cookies_{}.sqlite", uuid::Uuid::new_v4()));
+    let temp_file =
+        std::env::temp_dir().join(format!("corrupt_cookies_{}.sqlite", uuid::Uuid::new_v4()));
     fs::write(&temp_file, b"THIS IS NOT A VALID SQLITE DATABASE HEADER").unwrap();
 
     let reader = LocalSessionReader::new();
@@ -270,7 +286,10 @@ fn test_ffi_neg_07_concurrent_cookies_reads_without_lock_fail() {
 
     for h in handles {
         let res = h.join().unwrap();
-        assert!(res.is_ok(), "Concurrent read must not fail with database lock");
+        assert!(
+            res.is_ok(),
+            "Concurrent read must not fail with database lock"
+        );
     }
 
     let _ = fs::remove_file(&temp_db);
@@ -284,6 +303,9 @@ fn test_ffi_neg_08_null_pointer_guard() {
         aac_decoder_ptr: std::ptr::null(),
         mp3_decoder_ptr: std::ptr::null(),
     };
-    assert!(!bridge.is_operational(), "Bridge with null pointer must not report operational");
+    assert!(
+        !bridge.is_operational(),
+        "Bridge with null pointer must not report operational"
+    );
     assert!(!bridge.decoder_status().alac_ready);
 }

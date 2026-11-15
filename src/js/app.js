@@ -59,6 +59,13 @@ const state = {
   // Last artwork URL painted into the now-playing bar, so we never re-create the
   // <img> (which made it flicker) on every once-a-second state tick.
   streamArtworkUrl: null,
+  // Track metadata mirror, used by the full-screen Now Playing view.
+  streamTitle: "",
+  streamArtist: "",
+  streamAlbum: "",
+  streamArtworkLarge: null,
+  // Whether the full-screen Now Playing view is open.
+  nowPlayingOpen: false,
   // Debounce handle for transient empty player-state reports (see the listener).
   streamEmptyTimer: null,
 };
@@ -99,6 +106,24 @@ const volumeFill = $("#volume-fill");
 const trackCount = $("#track-count");
 const playlistList = $("#playlist-list");
 const navItems = $$(".nav-item");
+
+// Full-screen Now Playing view
+const nowPlayingView = $("#now-playing-view");
+const npBackdrop = $("#np-backdrop");
+const npArt = $("#np-art");
+const npTitle = $("#np-title");
+const npArtist = $("#np-artist");
+const npAlbum = $("#np-album");
+const npPlayIcon = $("#np-play-icon");
+const npProgressBar = $("#np-progress-bar");
+const npProgressFill = $("#np-progress-fill");
+const npCurrentTime = $("#np-current-time");
+const npTotalTime = $("#np-total-time");
+const npVolumeBar = $("#np-volume-bar");
+const npVolumeFill = $("#np-volume-fill");
+const npShuffleBtn = $("#np-shuffle-btn");
+const npRepeatBtn = $("#np-repeat-btn");
+const npQueueCount = $("#np-queue-count");
 
 // ─── Navigation ────────────────────────────────────────────────
 document.querySelector(".sidebar-nav.library-nav")?.addEventListener("click", (e) => {
@@ -301,6 +326,9 @@ function applyPlayerState(payload) {
   paintStreamControls();
 
   if (payload.title) {
+    state.streamTitle = payload.title;
+    state.streamArtist = payload.artist || "Apple Music";
+    state.streamAlbum = payload.album || "";
     if (nowPlayingTitle) nowPlayingTitle.textContent = payload.title;
     if (nowPlayingArtist) nowPlayingArtist.textContent = payload.artist || "Apple Music";
     const badge = $("#now-playing-badge");
@@ -314,10 +342,15 @@ function applyPlayerState(payload) {
     // now-playing art flicker.
     if (formatted !== state.streamArtworkUrl) {
       state.streamArtworkUrl = formatted;
+      state.streamArtworkLarge = payload.artwork
+        .replace("{w}", "900")
+        .replace("{h}", "900")
+        .replace("{f}", "jpg");
       const artImg = $("#now-playing-art");
       if (artImg) {
         artImg.innerHTML = `<img src="${formatted}" alt="" style="width: 56px; height: 56px; border-radius: 4px; object-fit: cover;" />`;
       }
+      if (state.nowPlayingOpen) paintNowPlayingArtwork();
     }
   }
 
@@ -331,6 +364,8 @@ function applyPlayerState(payload) {
   document.querySelectorAll(".track-item.stream-track").forEach((el) => {
     el.classList.toggle("playing", !!payload.id && el.dataset.catalogId === payload.id);
   });
+
+  if (state.nowPlayingOpen) paintNowPlaying();
 }
 
 // Reset the now-playing area when playback really stops (nothing follows the empty).
@@ -342,6 +377,10 @@ function clearNowPlayingUI() {
   state.streamPosition = 0;
   state.streamDuration = 0;
   state.streamArtworkUrl = null;
+  state.streamArtworkLarge = null;
+  state.streamTitle = "";
+  state.streamArtist = "";
+  state.streamAlbum = "";
   if (nowPlayingTitle) nowPlayingTitle.textContent = "No Track Selected";
   if (nowPlayingArtist) nowPlayingArtist.textContent = "Open your library to start playing";
   const badge = $("#now-playing-badge");
@@ -353,6 +392,7 @@ function clearNowPlayingUI() {
   if (currentTime) currentTime.textContent = "0:00";
   if (totalTime) totalTime.textContent = "0:00";
   paintStreamPhase();
+  if (state.nowPlayingOpen) paintNowPlaying();
 }
 
 // The Up Next list arrives on its own event, base64-decoded by Rust.
@@ -1888,13 +1928,18 @@ function showToast(message, kind = "info", ttl = 6000) {
 // ─── Up Next drawer ────────────────────────────────────────────
 
 function updateQueueBadge() {
-  if (!queueCount) return;
   const n = state.streamQueue.items.length;
-  if (n > 1) {
-    queueCount.textContent = String(n);
-    queueCount.style.display = "block";
-  } else {
-    queueCount.style.display = "none";
+  if (queueCount) {
+    if (n > 1) {
+      queueCount.textContent = String(n);
+      queueCount.style.display = "block";
+    } else {
+      queueCount.style.display = "none";
+    }
+  }
+  if (npQueueCount) {
+    npQueueCount.textContent = String(n);
+    npQueueCount.style.display = n > 1 ? "block" : "none";
   }
 }
 
@@ -1981,6 +2026,87 @@ function paintStreamControls() {
   if (typeof state.streamVolume === "number" && volumeFill) {
     volumeFill.style.width = `${state.streamVolume * 100}%`;
   }
+
+  if (npShuffleBtn) npShuffleBtn.classList.toggle("active", shuffleOn);
+  if (npRepeatBtn) npRepeatBtn.classList.toggle("active", mode !== 0);
+  if (npVolumeFill && typeof state.streamVolume === "number") {
+    npVolumeFill.style.width = `${state.streamVolume * 100}%`;
+  }
+}
+
+// ─── Full-screen Now Playing ───────────────────────────────────
+//
+// Same player, bigger canvas: every value here is read from the state the hidden
+// MusicKit page publishes, never guessed locally.
+
+function setNowPlayingOpen(open) {
+  if (!nowPlayingView) return;
+  state.nowPlayingOpen = open;
+  nowPlayingView.classList.toggle("open", open);
+  nowPlayingView.setAttribute("aria-hidden", open ? "false" : "true");
+  if (open) paintNowPlaying();
+}
+
+function paintNowPlayingArtwork() {
+  if (!npArt) return;
+  if (npBackdrop) {
+    npBackdrop.style.backgroundImage = state.streamArtworkLarge
+      ? `url("${state.streamArtworkLarge}")`
+      : "none";
+  }
+  if (!state.streamArtworkLarge) {
+    npArt.innerHTML = "";
+    delete npArt.dataset.url;
+    return;
+  }
+  // Same rule as the bar: never rebuild the <img> on a repeat state tick.
+  if (npArt.dataset.url === state.streamArtworkLarge) return;
+  npArt.dataset.url = state.streamArtworkLarge;
+  npArt.innerHTML = `<img src="${state.streamArtworkLarge}" alt="" />`;
+}
+
+function paintNowPlaying() {
+  if (!nowPlayingView) return;
+  paintNowPlayingArtwork();
+
+  const hasTrack = !!state.streamTitle;
+  if (npTitle) npTitle.textContent = hasTrack ? state.streamTitle : "No Track Selected";
+  if (npArtist) {
+    npArtist.textContent = hasTrack ? state.streamArtist : "Open your library to start playing";
+  }
+  if (npAlbum) npAlbum.textContent = hasTrack ? state.streamAlbum : "";
+
+  const position = state.streamIsPlaying
+    ? Math.min(state.streamDuration || 0, (Date.now() - state.streamAnchor) / 1000)
+    : state.streamPosition || 0;
+  const duration = state.streamDuration || 0;
+  const pct = duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0;
+  if (npProgressFill) npProgressFill.style.width = `${pct}%`;
+  if (npCurrentTime) npCurrentTime.textContent = formatTime(position);
+  if (npTotalTime) npTotalTime.textContent = formatTime(duration);
+
+  if (npPlayIcon) {
+    npPlayIcon.setAttribute(
+      "d",
+      state.streamIsPlaying ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z" : "M8 5v14l11-7z"
+    );
+  }
+  if (npShuffleBtn) npShuffleBtn.classList.toggle("active", !!state.streamShuffle);
+  if (npRepeatBtn) {
+    const mode = state.streamRepeat;
+    const label = mode === 2 ? "All" : mode === 1 ? "One" : "Off";
+    npRepeatBtn.classList.toggle("active", mode !== 0);
+    npRepeatBtn.setAttribute("title", `Repeat: ${label}`);
+  }
+  if (npVolumeFill && typeof state.streamVolume === "number") {
+    npVolumeFill.style.width = `${state.streamVolume * 100}%`;
+  }
+}
+
+/** Fraction (0..1) of a horizontal bar at the click position. */
+function fractionFromEvent(event, element) {
+  const rect = element.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
 }
 
 playBtn?.addEventListener("click", async () => {
@@ -2099,12 +2225,10 @@ repeatBtn?.addEventListener("click", async () => {
   }
 });
 
-// Volume control
-volumeBar?.addEventListener("click", async (e) => {
-  const rect = volumeBar.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const pct = Math.max(0, Math.min(1, x / rect.width));
-  volumeFill.style.width = `${pct * 100}%`;
+// Volume control — shared by the bar, the full-screen view and the keyboard.
+async function setVolumeFraction(pct) {
+  if (volumeFill) volumeFill.style.width = `${pct * 100}%`;
+  if (npVolumeFill) npVolumeFill.style.width = `${pct * 100}%`;
   try {
     if (state.streamingActive) {
       state.streamVolume = pct;
@@ -2116,14 +2240,14 @@ volumeBar?.addEventListener("click", async (e) => {
   } catch (err) {
     console.error("Set volume failed:", err);
   }
+}
+
+volumeBar?.addEventListener("click", (e) => {
+  setVolumeFraction(fractionFromEvent(e, volumeBar));
 });
 
-// Progress bar seeking
-progressBar?.addEventListener("click", async (e) => {
-  const rect = progressBar.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const pct = Math.max(0, Math.min(1, x / rect.width));
-
+// Progress bar seeking — shared by both bars.
+async function seekToFraction(pct) {
   // Streaming owns the bar while a stream is active — the local engine is idle.
   if (state.streamingActive) {
     const total = state.streamDuration || 0;
@@ -2131,8 +2255,9 @@ progressBar?.addEventListener("click", async (e) => {
     const target = pct * total;
     state.streamPosition = target;
     state.streamAnchor = Date.now() - target * 1000;
-    progressFill.style.width = `${pct * 100}%`;
-    currentTime.textContent = formatTime(target);
+    if (progressFill) progressFill.style.width = `${pct * 100}%`;
+    if (currentTime) currentTime.textContent = formatTime(target);
+    if (state.nowPlayingOpen) paintNowPlaying();
     try {
       await invoke("stream_seek", { position: target });
     } catch (err) {
@@ -2141,16 +2266,46 @@ progressBar?.addEventListener("click", async (e) => {
     return;
   }
 
-  progressFill.style.width = `${pct * 100}%`;
   const targetSecs = pct * (state.playback.duration || 0);
+  if (progressFill) progressFill.style.width = `${pct * 100}%`;
   try {
     await invoke("seek_to", { positionSecs: targetSecs });
     state.playback.position = targetSecs;
-    currentTime.textContent = formatTime(targetSecs);
+    if (currentTime) currentTime.textContent = formatTime(targetSecs);
+    if (state.nowPlayingOpen) paintNowPlaying();
   } catch (err) {
     console.error("Seek failed:", err);
   }
+}
+
+progressBar?.addEventListener("click", (e) => {
+  seekToFraction(fractionFromEvent(e, progressBar));
 });
+
+// ─── Full-screen Now Playing: controls ─────────────────────────
+//
+// Each control forwards to the transport that already owns the behaviour, so the
+// bar and the full view can never disagree about what a button does.
+$("#np-close-btn")?.addEventListener("click", () => setNowPlayingOpen(false));
+$("#np-queue-btn")?.addEventListener("click", () => setQueueOpen(true));
+$("#np-play-btn")?.addEventListener("click", () => playBtn?.click());
+$("#np-prev-btn")?.addEventListener("click", () => prevBtn?.click());
+$("#np-next-btn")?.addEventListener("click", () => nextBtn?.click());
+$("#np-shuffle-btn")?.addEventListener("click", () => shuffleBtn?.click());
+$("#np-repeat-btn")?.addEventListener("click", () => repeatBtn?.click());
+
+npProgressBar?.addEventListener("click", (e) => {
+  seekToFraction(fractionFromEvent(e, npProgressBar));
+});
+
+npVolumeBar?.addEventListener("click", (e) => {
+  setVolumeFraction(fractionFromEvent(e, npVolumeBar));
+});
+
+// Clicking the track in the playback bar opens the full view, like Apple Music.
+$("#now-playing-art")?.addEventListener("click", () => setNowPlayingOpen(true));
+$(".now-playing-info")?.addEventListener("click", () => setNowPlayingOpen(true));
+
 
 // Like button
 document.getElementById("like-btn")?.addEventListener("click", (e) => {
@@ -2163,20 +2318,9 @@ document.getElementById("like-btn")?.addEventListener("click", (e) => {
 
 // Mute toggle
 document.getElementById("volume-btn")?.addEventListener("click", async () => {
-  const isMuted = volumeFill.style.width === "0%" || volumeFill.style.width === "0px";
-  const targetVol = isMuted ? 0.8 : 0.0;
-  volumeFill.style.width = `${targetVol * 100}%`;
-  try {
-    if (state.streamingActive) {
-      state.streamVolume = targetVol;
-      await invoke("stream_volume", { volume: targetVol });
-      return;
-    }
-    await invoke("set_volume", { volume: targetVol });
-    state.playback.volume = targetVol;
-  } catch (err) {
-    console.error("Toggle mute failed:", err);
-  }
+  const current = state.streamingActive ? state.streamVolume : state.playback.volume;
+  const muted = typeof current === "number" ? current <= 0.001 : false;
+  await setVolumeFraction(muted ? 0.8 : 0.0);
 });
 
 // ─── Keyboard shortcuts ────────────────────────────────────────
@@ -2233,6 +2377,10 @@ document.addEventListener("keydown", (e) => {
 
   if (e.key === "Escape" && state.queueOpen) {
     setQueueOpen(false);
+    return;
+  }
+  if (e.key === "Escape" && state.nowPlayingOpen) {
+    setNowPlayingOpen(false);
     return;
   }
 
@@ -2301,6 +2449,7 @@ async function syncPlaybackStatus() {
         currentTime.textContent = formatTime(pos);
         totalTime.textContent = formatTime(state.streamDuration);
       }
+      if (state.nowPlayingOpen) paintNowPlaying();
       return;
     }
 

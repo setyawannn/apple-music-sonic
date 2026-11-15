@@ -225,7 +225,37 @@ never empty; only the *transport* state waits for truth.
 | ⌘/Ctrl + ← / → | Previous / next track |
 | `M` | Mute toggle |
 
-Media keys are not bound: they need a native/global hook, tracked in `02-WHATS-MISSING.md`.
+### Windows media keys and the flyout
+
+`player/media.rs` registers a `SystemMediaTransportControls` on the **main window** via
+`ISystemMediaTransportControlsInterop::GetForWindow`. OS presses (`ButtonPressed`) become the
+same `player_command`s the buttons send: resume, pause, stop, next, previous. Nothing new
+crosses the IPC boundary.
+
+The flyout is fed from the same `player-state` blob the transport bar paints from
+(`update_now_playing(&value)` in the poller): title, artist, album, artwork, playback status.
+One state source, two renderers.
+
+Two traps, both measured:
+
+- `ISystemMediaTransportControlsInterop` is **absent from the `windows` crate metadata**, so
+  `InteropVtbl` is declared by hand (7 slots) in the module.
+- Activate the factory **by the interop IID**. `RoGetActivationFactory` with `IUnknown` hands
+  back the object's primary vtable, and the fixed-slot read then access-violates
+  (`0xc0000005` — observed, and it took the whole app down).
+
+Registration failure is logged and non-fatal: the app runs without media keys.
+
+## Now Playing — the full-screen view
+
+`#now-playing-view` opens when the bar's artwork or title is clicked and closes with `Esc` or
+the chevron. It is a **mirror**: `paintNowPlaying()` reads `state.stream*` (which
+`applyPlayerState` fills), its buttons forward to the transport bar's own handlers, and
+`seekToFraction` / `setVolumeFraction` are shared by both bars. There is no second source of
+truth and no second set of commands.
+
+Artwork is written only when the URL changes (`state.streamArtworkUrl` / `npArt.dataset.url`),
+because `player-state` fires roughly once a second and rebuilding the `<img>` flickers.
 
 ## Restore on launch
 
@@ -363,14 +393,21 @@ not part of the product.
 
 | Path | Lines | Role |
 |------|-------|------|
-| `src-tauri/src/lib.rs` | 1,450 | 58 commands, `PLAYER_BOOTSTRAP` (queue + transport + publish + Up Next), `ensure_player`, `player_command`, `start_state_poller` (state + restore persistence), `base64_decode`, playlist write commands, auth windows, lifecycle |
-| `src-tauri/src/api/client.rs` | 662 | REST: search, suggestions, album, charts, library, playlists (read + create/rename/delete/add-tracks) |
-| `src-tauri/src/api/local_session.rs` | 397 | WebView2 cookie import |
-| `src-tauri/src/api/auth.rs` | 166 | Developer token, session persistence, storefront |
-| `src-tauri/src/api/models.rs` | 101 | Store models |
-| `src/js/app.js` | 2,357 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, playlist read/write, keyboard shortcuts, resume) |
-| `src/styles/app.css` | 1,407 | Apple-style dark theme |
-| `index.html` | 176 | Shell: sidebar, main view, playback bar |
+| `src-tauri/src/lib.rs` | 147 | module wiring, `generate_handler!` (58 commands), `run()` + window lifecycle |
+| `src-tauri/src/error.rs` | 88 | `AppError` / `AppResult` (typed, serialized as a plain message) |
+| `src-tauri/src/state.rs` | 29 | `AppState` + poison-safe `library()` |
+| `src-tauri/src/commands/*.rs` | - | `local` (parked) · `auth` · `catalog` · `playlist` · `diagnostics` |
+| `src-tauri/src/player/mod.rs` | 304 | hidden player window, `player_command`, `start_state_poller` (state + restore persistence) |
+| `src-tauri/src/player/bootstrap.js` | 179 | `PLAYER_BOOTSTRAP`: queue + transport + publish + Up Next |
+| `src-tauri/src/player/cookie.rs` | 86 | percent/base64 codecs for the state channel |
+| `src-tauri/src/player/media.rs` | 266 | SMTC media keys + now-playing flyout |
+| `src-tauri/src/api/client.rs` | 620 | REST: search, suggestions, album, charts, library, playlists (read + create/rename/delete/add-tracks) |
+| `src-tauri/src/api/local_session.rs` | 367 | WebView2 cookie import |
+| `src-tauri/src/api/auth.rs` | 155 | Developer token, session persistence, storefront |
+| `src-tauri/src/api/models.rs` | 90 | Store models |
+| `src/js/app.js` | 2,628 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, full-screen Now Playing, playlist read/write, keyboard shortcuts, resume) |
+| `src/styles/app.css` | 1,643 | Apple-style dark theme |
+| `index.html` | 262 | Shell: sidebar, main view, playback bar, Now Playing view |
 | `src-tauri/src/audio/**`, `library/**` | 2,077 | **PARKED** local engine + library |
 | `src-tauri/src/drm/**` | 1,538 | **ABANDONED** native decrypt attempt |
-| `src-tauri/capabilities/{default,player}.json` | — | Window permissions |
+| `src-tauri/capabilities/{default,player}.json` | - | Window permissions |

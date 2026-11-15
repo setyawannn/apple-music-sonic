@@ -5,11 +5,11 @@ pub mod stream;
 use queue::{QueueManager, RepeatMode};
 use serde::{Deserialize, Serialize};
 use source::SymphoniaSource;
-use stream::StreamCache;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use stream::StreamCache;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlaybackState {
@@ -72,6 +72,12 @@ pub struct Engine {
     pub stream_cache: Arc<StreamCache>,
     pub http_client: reqwest::Client,
     command_tx: Sender<AudioCommand>,
+}
+
+impl Default for Engine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Engine {
@@ -208,7 +214,8 @@ fn run_audio_worker(
                     if let Some(ref handle) = stream_handle {
                         match SymphoniaSource::new(&path) {
                             Ok(source) => {
-                                let calculated_dur = source.duration_secs().unwrap_or(duration_secs);
+                                let calculated_dur =
+                                    source.duration_secs().unwrap_or(duration_secs);
                                 track_duration = calculated_dur;
 
                                 match rodio::Sink::try_new(handle) {
@@ -285,7 +292,8 @@ fn run_audio_worker(
                 }
                 AudioCommand::Seek { position_secs } => {
                     let target = position_secs.clamp(0.0, track_duration.max(0.0));
-                    if let (Some(ref path), Some(ref handle)) = (&current_file_path, &stream_handle) {
+                    if let (Some(ref path), Some(ref handle)) = (&current_file_path, &stream_handle)
+                    {
                         match SymphoniaSource::new(path) {
                             Ok(mut source) => {
                                 let _ = source.seek(target);
@@ -294,7 +302,10 @@ fn run_audio_worker(
                                     sink.set_volume(vol);
                                     sink.append(source);
 
-                                    let is_paused = status.lock().map(|s| s.state == PlaybackState::Paused).unwrap_or(false);
+                                    let is_paused = status
+                                        .lock()
+                                        .map(|s| s.state == PlaybackState::Paused)
+                                        .unwrap_or(false);
                                     if is_paused {
                                         sink.pause();
                                         play_start = None;
@@ -352,7 +363,8 @@ fn run_audio_worker(
                         let path = PathBuf::from(&track.file_path);
                         match SymphoniaSource::new(&path) {
                             Ok(source) => {
-                                let calc_dur = source.duration_secs().unwrap_or(track.duration_secs);
+                                let calc_dur =
+                                    source.duration_secs().unwrap_or(track.duration_secs);
                                 track_duration = calc_dur;
 
                                 if let Ok(new_sink) = rodio::Sink::try_new(handle) {
@@ -376,7 +388,11 @@ fn run_audio_worker(
                                 }
                             }
                             Err(e) => {
-                                log::error!("Failed to auto-advance to track {:?}: {}", track.file_path, e);
+                                log::error!(
+                                    "Failed to auto-advance to track {:?}: {}",
+                                    track.file_path,
+                                    e
+                                );
                                 if let Ok(mut s) = status.lock() {
                                     s.state = PlaybackState::Stopped;
                                 }

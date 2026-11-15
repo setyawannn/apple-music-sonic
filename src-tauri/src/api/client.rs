@@ -1,5 +1,8 @@
 use super::auth::AuthManager;
-use super::models::{CatalogCharts, CatalogSearchResult, CloudPlaylist, SearchSuggestions, StoreAlbum, StoreArtist, StoreSong};
+use super::models::{
+    CatalogCharts, CatalogSearchResult, CloudPlaylist, SearchSuggestions, StoreAlbum, StoreArtist,
+    StoreSong,
+};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION};
 use serde_json::Value;
 use std::sync::Arc;
@@ -55,8 +58,14 @@ impl ApiClient {
             }
         }
 
-        headers.insert("Origin", HeaderValue::from_static("https://music.apple.com"));
-        headers.insert("Referer", HeaderValue::from_static("https://music.apple.com/"));
+        headers.insert(
+            "Origin",
+            HeaderValue::from_static("https://music.apple.com"),
+        );
+        headers.insert(
+            "Referer",
+            HeaderValue::from_static("https://music.apple.com/"),
+        );
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
         headers
@@ -118,13 +127,12 @@ impl ApiClient {
         let storefront = self.auth.storefront();
         let language = self.auth.language();
 
-        let url = format!("{}/v1/catalog/{}/search/suggestions", self.edge_url, storefront);
+        let url = format!(
+            "{}/v1/catalog/{}/search/suggestions",
+            self.edge_url, storefront
+        );
 
-        let query_params = [
-            ("term", trimmed),
-            ("kinds", "terms"),
-            ("l", &language),
-        ];
+        let query_params = [("term", trimmed), ("kinds", "terms"), ("l", &language)];
 
         let response = self
             .http
@@ -143,7 +151,10 @@ impl ApiClient {
 
         if let Some(terms_arr) = json["results"]["suggestions"].as_array() {
             for item in terms_arr {
-                if let Some(display_term) = item["searchTerm"].as_str().or_else(|| item["displayTerm"].as_str()) {
+                if let Some(display_term) = item["searchTerm"]
+                    .as_str()
+                    .or_else(|| item["displayTerm"].as_str())
+                {
                     terms.push(display_term.to_string());
                 }
             }
@@ -183,7 +194,11 @@ impl ApiClient {
         Ok(parse_single_album_json(data))
     }
 
-    pub async fn get_charts(&self, types: Option<&str>, limit: u32) -> anyhow::Result<CatalogCharts> {
+    pub async fn get_charts(
+        &self,
+        types: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<CatalogCharts> {
         let storefront = self.auth.storefront();
         let language = self.auth.language();
         let types_param = types.unwrap_or("songs,albums");
@@ -240,7 +255,10 @@ impl ApiClient {
         }
 
         let language = self.auth.language();
-        let url = format!("{}/v1/me/library/songs?limit=100&l={}", self.base_url, language);
+        let url = format!(
+            "{}/v1/me/library/songs?limit=100&l={}",
+            self.base_url, language
+        );
 
         let response = self
             .http
@@ -312,7 +330,10 @@ impl ApiClient {
         // (measured; `include=trackCount` and `extend=tracks` are accepted but add nothing).
         // Track counts are therefore absent from the list — tracks are fetched on demand by
         // `get_playlist_tracks` when a playlist is opened.
-        let url = format!("{}/v1/me/library/playlists?limit=100&l={}", self.base_url, language);
+        let url = format!(
+            "{}/v1/me/library/playlists?limit=100&l={}",
+            self.base_url, language
+        );
 
         let response = self
             .http
@@ -343,7 +364,10 @@ impl ApiClient {
         }
 
         let language = self.auth.language();
-        let url = format!("{}/v1/me/library/playlists/{}/tracks?limit=100&l={}", self.base_url, playlist_id, language);
+        let url = format!(
+            "{}/v1/me/library/playlists/{}/tracks?limit=100&l={}",
+            self.base_url, playlist_id, language
+        );
 
         let response = self
             .http
@@ -419,7 +443,11 @@ impl ApiClient {
     /// Deliberately **no `?l=` query parameter**: adding one makes Apple return
     /// 500 (measured during the write probe). A bare `{ "attributes": { "name" } }`
     /// body returns 204.
-    pub async fn rename_library_playlist(&self, playlist_id: &str, name: &str) -> anyhow::Result<()> {
+    pub async fn rename_library_playlist(
+        &self,
+        playlist_id: &str,
+        name: &str,
+    ) -> anyhow::Result<()> {
         if !self.auth.is_authenticated() {
             anyhow::bail!("User is not authenticated with Apple ID");
         }
@@ -451,7 +479,12 @@ impl ApiClient {
             anyhow::bail!("User is not authenticated with Apple ID");
         }
         let url = format!("{}/v1/me/library/playlists/{}", self.base_url, playlist_id);
-        let response = self.http.delete(&url).headers(self.build_headers()).send().await?;
+        let response = self
+            .http
+            .delete(&url)
+            .headers(self.build_headers())
+            .send()
+            .await?;
         let status = response.status();
         if !status.is_success() {
             let json: Value = response.json().await.unwrap_or(Value::Null);
@@ -552,7 +585,10 @@ pub fn parse_single_playlist_json(p: &Value) -> CloudPlaylist {
 
     CloudPlaylist {
         id: p["id"].as_str().unwrap_or("").to_string(),
-        name: attrs["name"].as_str().unwrap_or("Untitled Playlist").to_string(),
+        name: attrs["name"]
+            .as_str()
+            .unwrap_or("Untitled Playlist")
+            .to_string(),
         description,
         track_count: attrs["trackCount"].as_u64().unwrap_or(tracks.len() as u64) as u32,
         artwork_url: attrs["artwork"]["url"].as_str().map(|s| s.to_string()),
@@ -597,7 +633,8 @@ pub fn parse_single_song_json(s: &Value) -> StoreSong {
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
         .unwrap_or_default();
 
-    let has_lossless = audio_traits.contains(&"lossless") || audio_traits.contains(&"hi-res-lossless");
+    let has_lossless =
+        audio_traits.contains(&"lossless") || audio_traits.contains(&"hi-res-lossless");
     let has_atmos = audio_traits.contains(&"spatial") || audio_traits.contains(&"atmos");
 
     let preview_url = attrs["previews"]
@@ -608,8 +645,14 @@ pub fn parse_single_song_json(s: &Value) -> StoreSong {
 
     StoreSong {
         id: s["id"].as_str().unwrap_or("").to_string(),
-        title: attrs["name"].as_str().unwrap_or("Unknown Title").to_string(),
-        artist: attrs["artistName"].as_str().unwrap_or("Unknown Artist").to_string(),
+        title: attrs["name"]
+            .as_str()
+            .unwrap_or("Unknown Title")
+            .to_string(),
+        artist: attrs["artistName"]
+            .as_str()
+            .unwrap_or("Unknown Artist")
+            .to_string(),
         album: attrs["albumName"].as_str().unwrap_or("").to_string(),
         duration_ms: attrs["durationInMillis"].as_u64().unwrap_or(0),
         track_number: attrs["trackNumber"].as_u64().unwrap_or(0) as u32,
@@ -618,7 +661,11 @@ pub fn parse_single_song_json(s: &Value) -> StoreSong {
         has_lossless,
         has_atmos,
         release_date: attrs["releaseDate"].as_str().map(|s| s.to_string()),
-        genre: attrs["genreNames"].as_array().and_then(|a| a.first()).and_then(|g| g.as_str()).map(|s| s.to_string()),
+        genre: attrs["genreNames"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|g| g.as_str())
+            .map(|s| s.to_string()),
     }
 }
 
@@ -634,8 +681,14 @@ pub fn parse_single_album_json(a: &Value) -> StoreAlbum {
 
     StoreAlbum {
         id: a["id"].as_str().unwrap_or("").to_string(),
-        title: attrs["name"].as_str().unwrap_or("Unknown Album").to_string(),
-        artist: attrs["artistName"].as_str().unwrap_or("Unknown Artist").to_string(),
+        title: attrs["name"]
+            .as_str()
+            .unwrap_or("Unknown Album")
+            .to_string(),
+        artist: attrs["artistName"]
+            .as_str()
+            .unwrap_or("Unknown Artist")
+            .to_string(),
         track_count: attrs["trackCount"].as_u64().unwrap_or(tracks.len() as u64) as u32,
         release_date: attrs["releaseDate"].as_str().map(|s| s.to_string()),
         artwork_url: attrs["artwork"]["url"].as_str().map(|s| s.to_string()),

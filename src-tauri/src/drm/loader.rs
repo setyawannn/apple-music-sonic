@@ -92,7 +92,15 @@ impl NativeLibrary {
     }
 
     /// Look up a symbol by name
-    pub unsafe fn get_symbol<T>(&self, symbol_name: &[u8]) -> Result<libloading::Symbol<'_, T>, LoaderError> {
+    ///
+    /// # Safety
+    ///
+    /// The caller must transmute the returned symbol to a signature that matches the
+    /// one the loaded library actually exports; `libloading` cannot check that.
+    pub unsafe fn get_symbol<T>(
+        &self,
+        symbol_name: &[u8],
+    ) -> Result<libloading::Symbol<'_, T>, LoaderError> {
         self.lib.get(symbol_name).map_err(|_| {
             let name_str = String::from_utf8_lossy(symbol_name)
                 .trim_end_matches('\0')
@@ -102,6 +110,11 @@ impl NativeLibrary {
     }
 
     /// Look up a symbol by ordinal number (Windows PE)
+    ///
+    /// # Safety
+    ///
+    /// The ordinal must exist in the module and denote a function whose signature the
+    /// caller gets right; the raw pointer carries no type information.
     #[cfg(windows)]
     pub unsafe fn get_ordinal<T>(&self, ordinal: u16) -> Result<*const (), LoaderError> {
         #[link(name = "kernel32")]
@@ -110,7 +123,12 @@ impl NativeLibrary {
             fn GetProcAddress(hModule: isize, lpProcName: *const u8) -> *const ();
         }
 
-        let wide_path = self.path.as_os_str().encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let wide_path = self
+            .path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>();
         let handle = GetModuleHandleW(wide_path.as_ptr());
         if handle == 0 {
             return Err(LoaderError::OrdinalNotFound(ordinal));
@@ -245,7 +263,8 @@ mod tests {
     fn test_ldr_pos_02_resolve_symbol_by_name() {
         let lib = NativeLibrary::load("kernel32.dll").expect("load kernel32");
         let sym: libloading::Symbol<unsafe extern "system" fn() -> u32> = unsafe {
-            lib.get_symbol(b"GetCurrentProcessId\0").expect("find GetCurrentProcessId")
+            lib.get_symbol(b"GetCurrentProcessId\0")
+                .expect("find GetCurrentProcessId")
         };
         let pid = unsafe { sym() };
         assert_eq!(pid, std::process::id());
@@ -284,7 +303,8 @@ mod tests {
     #[test]
     fn test_ldr_neg_02_missing_symbol_by_name() {
         let lib = NativeLibrary::load("kernel32.dll").expect("load kernel32");
-        let err = unsafe { lib.get_symbol::<()>(b"ThisSymbolDefinitelyDoesNotExistInKernel32\0") }.unwrap_err();
+        let err = unsafe { lib.get_symbol::<()>(b"ThisSymbolDefinitelyDoesNotExistInKernel32\0") }
+            .unwrap_err();
         match err {
             LoaderError::SymbolNotFound(name) => {
                 assert_eq!(name, "ThisSymbolDefinitelyDoesNotExistInKernel32");
@@ -305,8 +325,13 @@ mod tests {
 
     #[test]
     fn test_ldr_neg_04_corrupted_non_pe_file_as_dll() {
-        let temp_garbage = std::env::temp_dir().join(format!("not_a_dll_{}.dll", uuid::Uuid::new_v4()));
-        fs::write(&temp_garbage, b"Plain text file content, completely invalid PE format").unwrap();
+        let temp_garbage =
+            std::env::temp_dir().join(format!("not_a_dll_{}.dll", uuid::Uuid::new_v4()));
+        fs::write(
+            &temp_garbage,
+            b"Plain text file content, completely invalid PE format",
+        )
+        .unwrap();
 
         let err = NativeLibrary::load(&temp_garbage).unwrap_err();
         match err {

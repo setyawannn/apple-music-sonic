@@ -64,6 +64,12 @@ pub struct Library {
     pub artwork_manager: Arc<ArtworkManager>,
 }
 
+impl Default for Library {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Library {
     pub fn new() -> Self {
         let base_dir = std::env::var("APPDATA")
@@ -133,7 +139,11 @@ impl Library {
         self.db.add_track_to_playlist(playlist_id, track_id)
     }
 
-    pub fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> anyhow::Result<()> {
+    pub fn remove_track_from_playlist(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+    ) -> anyhow::Result<()> {
         self.db.remove_track_from_playlist(playlist_id, track_id)
     }
 
@@ -143,8 +153,15 @@ impl Library {
 
     pub fn import_playlist_file<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<Playlist> {
         let path = path.as_ref();
-        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
-        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Imported Playlist");
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported Playlist");
 
         let file_paths = match ext.as_str() {
             "pls" => PlaylistFileHelper::import_pls(path)?,
@@ -163,9 +180,17 @@ impl Library {
         Ok(playlist)
     }
 
-    pub fn export_playlist_file<P: AsRef<Path>>(&self, playlist_id: &str, out_path: P) -> anyhow::Result<()> {
+    pub fn export_playlist_file<P: AsRef<Path>>(
+        &self,
+        playlist_id: &str,
+        out_path: P,
+    ) -> anyhow::Result<()> {
         let out_path = out_path.as_ref();
-        let ext = out_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+        let ext = out_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
         let playlists = self.playlists();
         let playlist = playlists

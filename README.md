@@ -25,7 +25,9 @@ matches what the player is actually doing.
 | Cloud playlists (read + create/rename/delete/add songs, auto-synced) | ✅ works |
 | Loading spinner, error toast, resume-on-launch | ✅ works |
 | Keyboard shortcuts (Space, arrows, `M`) | ✅ works |
+| Windows media keys + now-playing flyout (SMTC) | ✅ works |
 | Up Next queue drawer (click to jump) | ✅ works |
+| Full-screen Now Playing view | ✅ works |
 | Radio stations | ❌ not wired (needs Apple's stations API) |
 | Local file playback | ⏸ parked — see `docs/03-implementation/04-PARKED-LOCAL-PLAYBACK.md` |
 | Lossless / Atmos | ⛔ out of reach on this architecture (AAC 256 ceiling) |
@@ -73,10 +75,14 @@ Production binary: `src-tauri/target/release/app.exe` (~20 MB).
 ## Project layout
 
 ```
-index.html                  UI shell (sidebar, main view, playback bar)
+index.html                  UI shell (sidebar, main view, playback bar, Now Playing view)
 src/js/app.js               UI logic and Tauri command calls
 src/styles/app.css          Apple-style dark theme
-src-tauri/src/lib.rs        58 Tauri commands, hidden player, cookie state poller, auth, lifecycle
+src-tauri/src/lib.rs        module wiring, 58 Tauri commands, window lifecycle
+src-tauri/src/error.rs      typed AppError / AppResult
+src-tauri/src/state.rs      AppState
+src-tauri/src/commands/     auth, catalog, playlists, diagnostics, parked local commands
+src-tauri/src/player/       hidden MusicKit webview, bootstrap JS, cookie codecs, SMTC media keys
 src-tauri/src/api/          REST client, auth, session import
 src-tauri/src/audio/        parked local engine (symphonia + rodio)
 src-tauri/src/library/      parked local library (SQLite)

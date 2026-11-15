@@ -10,7 +10,9 @@ async fn spawn_mock_server<F>(handler: F) -> (String, Sender<()>)
 where
     F: Fn(&str, &str) -> (u16, String) + Send + Sync + 'static,
 {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock server");
     let addr = listener.local_addr().unwrap();
     let (tx, mut rx) = channel();
     let handler = Arc::new(handler);
@@ -37,7 +39,7 @@ where
                                 };
                                 let resp = format!(
                                     "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                                    status_code, status_text, body.as_bytes().len(), body
+                                    status_code, status_text, body.len(), body
                                 );
                                 let _ = stream.write_all(resp.as_bytes()).await;
                                 let _ = stream.flush().await;
@@ -116,7 +118,8 @@ const MOCK_SEARCH_JSON: &str = r#"{
 
 #[test]
 fn test_api_pos_01_auth_session_persistence() {
-    let temp_session = std::env::temp_dir().join(format!("session_persist_{}.json", uuid::Uuid::new_v4()));
+    let temp_session =
+        std::env::temp_dir().join(format!("session_persist_{}.json", uuid::Uuid::new_v4()));
     let auth = AuthManager::new(&temp_session);
 
     assert!(!auth.is_authenticated());
@@ -124,11 +127,17 @@ fn test_api_pos_01_auth_session_persistence() {
     auth.set_user_token(Some("valid_mut_token_abc123456789".to_string()))
         .expect("save token");
     assert!(auth.is_authenticated());
-    assert_eq!(auth.user_token().as_deref(), Some("valid_mut_token_abc123456789"));
+    assert_eq!(
+        auth.user_token().as_deref(),
+        Some("valid_mut_token_abc123456789")
+    );
 
     let auth2 = AuthManager::new(&temp_session);
     assert!(auth2.is_authenticated());
-    assert_eq!(auth2.user_token().as_deref(), Some("valid_mut_token_abc123456789"));
+    assert_eq!(
+        auth2.user_token().as_deref(),
+        Some("valid_mut_token_abc123456789")
+    );
 
     let _ = std::fs::remove_file(&temp_session);
 }
@@ -140,10 +149,12 @@ async fn test_api_pos_02_authenticated_headers_injection() {
         assert!(req.contains("music-user-token: test_user_session_token_xyz"));
         assert!(req.contains("origin: https://music.apple.com"));
         (200, MOCK_SEARCH_JSON.to_string())
-    }).await;
+    })
+    .await;
 
     let auth = Arc::new(AuthManager::in_memory());
-    auth.set_user_token(Some("test_user_session_token_xyz".to_string())).unwrap();
+    auth.set_user_token(Some("test_user_session_token_xyz".to_string()))
+        .unwrap();
 
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
     let res = client.search_catalog("coldplay", None, 10).await.unwrap();
@@ -187,9 +198,8 @@ async fn test_api_pos_04_search_suggestions_parsing() {
       }
     }"#;
 
-    let (server_url, shutdown_tx) = spawn_mock_server(move |_line, _req| {
-        (200, mock_suggestions.to_string())
-    }).await;
+    let (server_url, shutdown_tx) =
+        spawn_mock_server(move |_line, _req| (200, mock_suggestions.to_string())).await;
 
     let auth = Arc::new(AuthManager::in_memory());
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
@@ -225,10 +235,12 @@ async fn test_api_pos_05_personal_library_tracks_parsing() {
     let (server_url, shutdown_tx) = spawn_mock_server(move |_line, req| {
         assert!(req.contains("music-user-token: active_user_token"));
         (200, mock_personal.to_string())
-    }).await;
+    })
+    .await;
 
     let auth = Arc::new(AuthManager::in_memory());
-    auth.set_user_token(Some("active_user_token".to_string())).unwrap();
+    auth.set_user_token(Some("active_user_token".to_string()))
+        .unwrap();
 
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
     let library_songs = client.get_personal_library_songs().await.unwrap();
@@ -266,12 +278,12 @@ async fn test_api_pos_06_personal_recommendations_parsing() {
       ]
     }"#;
 
-    let (server_url, shutdown_tx) = spawn_mock_server(move |_line, _req| {
-        (200, mock_recs.to_string())
-    }).await;
+    let (server_url, shutdown_tx) =
+        spawn_mock_server(move |_line, _req| (200, mock_recs.to_string())).await;
 
     let auth = Arc::new(AuthManager::in_memory());
-    auth.set_user_token(Some("token_for_recs".to_string())).unwrap();
+    auth.set_user_token(Some("token_for_recs".to_string()))
+        .unwrap();
 
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
     let recs = client.get_personal_recommendations().await.unwrap();
@@ -306,7 +318,8 @@ fn test_api_pos_07_artwork_template_formatter() {
 #[test]
 fn test_api_pos_08_user_sign_out() {
     let auth = AuthManager::in_memory();
-    auth.set_user_token(Some("active_token".to_string())).unwrap();
+    auth.set_user_token(Some("active_token".to_string()))
+        .unwrap();
     assert!(auth.is_authenticated());
 
     auth.sign_out().expect("sign out");
@@ -321,8 +334,12 @@ fn test_api_pos_08_user_sign_out() {
 #[tokio::test]
 async fn test_api_neg_01_expired_session_handling() {
     let (server_url, shutdown_tx) = spawn_mock_server(|_line, _req| {
-        (401, r#"{"error":"401 Unauthorized token expired"}"#.to_string())
-    }).await;
+        (
+            401,
+            r#"{"error":"401 Unauthorized token expired"}"#.to_string(),
+        )
+    })
+    .await;
 
     let auth = Arc::new(AuthManager::in_memory());
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
@@ -338,7 +355,11 @@ async fn test_api_neg_01_expired_session_handling() {
 #[tokio::test]
 async fn test_api_neg_02_network_offline_graceful_error() {
     let auth = Arc::new(AuthManager::in_memory());
-    let client = ApiClient::with_base_url(auth, "http://127.0.0.1:1".to_string(), "http://127.0.0.1:1".to_string());
+    let client = ApiClient::with_base_url(
+        auth,
+        "http://127.0.0.1:1".to_string(),
+        "http://127.0.0.1:1".to_string(),
+    );
 
     let res = client.search_catalog("test", None, 5).await;
     assert!(res.is_err(), "Must return Err on network failure");
@@ -346,9 +367,8 @@ async fn test_api_neg_02_network_offline_graceful_error() {
 
 #[tokio::test]
 async fn test_api_neg_03_resource_not_found_404() {
-    let (server_url, shutdown_tx) = spawn_mock_server(|_line, _req| {
-        (404, r#"{"error":"Album not found"}"#.to_string())
-    }).await;
+    let (server_url, shutdown_tx) =
+        spawn_mock_server(|_line, _req| (404, r#"{"error":"Album not found"}"#.to_string())).await;
 
     let auth = Arc::new(AuthManager::in_memory());
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
@@ -362,9 +382,8 @@ async fn test_api_neg_03_resource_not_found_404() {
 
 #[tokio::test]
 async fn test_api_neg_04_rate_limiting_429_backoff() {
-    let (server_url, shutdown_tx) = spawn_mock_server(|_line, _req| {
-        (429, r#"{"error":"Rate limited"}"#.to_string())
-    }).await;
+    let (server_url, shutdown_tx) =
+        spawn_mock_server(|_line, _req| (429, r#"{"error":"Rate limited"}"#.to_string())).await;
 
     let auth = Arc::new(AuthManager::in_memory());
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
@@ -393,9 +412,8 @@ async fn test_api_neg_05_empty_or_whitespace_search() {
 
 #[tokio::test]
 async fn test_api_neg_06_malformed_json_api_response() {
-    let (server_url, shutdown_tx) = spawn_mock_server(|_line, _req| {
-        (200, "{THIS IS NOT VALID JSON AT ALL!".to_string())
-    }).await;
+    let (server_url, shutdown_tx) =
+        spawn_mock_server(|_line, _req| (200, "{THIS IS NOT VALID JSON AT ALL!".to_string())).await;
 
     let auth = Arc::new(AuthManager::in_memory());
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
@@ -411,7 +429,8 @@ async fn test_api_neg_07_special_characters_in_search() {
     let (server_url, shutdown_tx) = spawn_mock_server(|line, _req| {
         assert!(line.contains("term=") || line.contains("term"));
         (200, MOCK_SEARCH_JSON.to_string())
-    }).await;
+    })
+    .await;
 
     let auth = Arc::new(AuthManager::in_memory());
     let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
@@ -425,18 +444,23 @@ async fn test_api_neg_07_special_characters_in_search() {
 
 #[tokio::test]
 async fn test_api_neg_08_concurrent_search_requests() {
-    let (server_url, shutdown_tx) = spawn_mock_server(|_line, _req| {
-        (200, MOCK_SEARCH_JSON.to_string())
-    }).await;
+    let (server_url, shutdown_tx) =
+        spawn_mock_server(|_line, _req| (200, MOCK_SEARCH_JSON.to_string())).await;
 
     let auth = Arc::new(AuthManager::in_memory());
-    let client = Arc::new(ApiClient::with_base_url(auth, server_url.clone(), server_url));
+    let client = Arc::new(ApiClient::with_base_url(
+        auth,
+        server_url.clone(),
+        server_url,
+    ));
 
     let mut handles = Vec::new();
     for i in 0..15 {
         let client_clone = Arc::clone(&client);
         handles.push(tokio::spawn(async move {
-            let res = client_clone.search_catalog(&format!("query-{}", i), None, 5).await;
+            let res = client_clone
+                .search_catalog(&format!("query-{}", i), None, 5)
+                .await;
             assert!(res.is_ok());
         }));
     }

@@ -197,7 +197,10 @@ impl Database {
 
     pub fn delete_track_by_path(&self, file_path: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM tracks WHERE file_path = ?1", params![file_path])?;
+        conn.execute(
+            "DELETE FROM tracks WHERE file_path = ?1",
+            params![file_path],
+        )?;
         Ok(())
     }
 
@@ -278,7 +281,7 @@ impl Database {
             });
         }
 
-        albums.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        albums.sort_by_key(|a| a.title.to_lowercase());
         Ok(albums)
     }
 
@@ -306,7 +309,12 @@ impl Database {
         Ok(artists)
     }
 
-    pub fn create_playlist(&self, id: &str, name: &str, description: &str) -> anyhow::Result<Playlist> {
+    pub fn create_playlist(
+        &self,
+        id: &str,
+        name: &str,
+        description: &str,
+    ) -> anyhow::Result<Playlist> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
         conn.execute(
@@ -382,7 +390,11 @@ impl Database {
         Ok(())
     }
 
-    pub fn remove_track_from_playlist(&self, playlist_id: &str, track_id: &str) -> anyhow::Result<()> {
+    pub fn remove_track_from_playlist(
+        &self,
+        playlist_id: &str,
+        track_id: &str,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2",

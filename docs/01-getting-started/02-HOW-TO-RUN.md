@@ -62,9 +62,10 @@ needed.
 
 ### What you can expect to be rough
 
-- **Media keys are not bound.** In-app shortcuts work (Space, arrows, `M`), but the hardware
-  media keys need a native hook. (P3)
-- **No full-screen Now Playing view yet.** The Up Next drawer is in the transport bar, though.
+- **Media keys work through SMTC.** Hardware play/pause/next/previous and the Windows
+  now-playing flyout are bound to the main window (`player/media.rs`). If registration fails
+  the app still runs — it just logs `media keys unavailable`.
+- **Now Playing** opens when you click the bar's artwork or title; `Esc` closes it.
 - **Radio** is an honest placeholder: live stations need Apple's stations API.
 - **The playback bar lags reality by up to ~250 ms.** The player publishes state on events
   and on a timer; the frontend smooths between reports.

@@ -30,11 +30,16 @@
       var m = window.MusicKit.getInstance();
       var item = m.nowPlayingItem || null;
       var attrs = (item && item.attributes) || null;
+      var playParams = (attrs && attrs.playParams) || null;
       var json = JSON.stringify({
         isPlaying: !!m.isPlaying,
         position: m.currentPlaybackTime || 0,
         duration: m.currentPlaybackDuration || 0,
         id: item && item.id ? item.id : null,
+        // Library songs report `i.…` ids, but lyrics are catalog-scoped. Apple puts
+        // the catalog twin in `playParams.catalogId`, so publish it rather than
+        // paying for a lookup on every track. Absent for library-only uploads.
+        catalogId: playParams && playParams.catalogId ? String(playParams.catalogId) : null,
         title: attrs ? attrs.name : null,
         artist: attrs ? attrs.artistName : null,
         artwork: attrs && attrs.artwork ? attrs.artwork.url : null,

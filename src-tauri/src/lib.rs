@@ -20,7 +20,7 @@ use tauri::Manager;
 pub use error::{AppError, AppResult};
 pub use state::AppState;
 
-use commands::{auth, catalog, diagnostics, local, playlist};
+use commands::{auth, catalog, diagnostics, local, lyrics, playlist};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -148,6 +148,8 @@ pub fn run() {
             playlist::rename_cloud_playlist,
             playlist::delete_cloud_playlist,
             playlist::add_to_cloud_playlist,
+            // Lyrics for the playing song
+            lyrics::get_lyrics,
             // Native-bridge diagnostics (abandoned path)
             diagnostics::get_native_bridge_status,
             diagnostics::import_local_apple_session,

@@ -122,6 +122,76 @@ Body: {
 }
 ```
 
+### 3.6 Song Lyrics (undocumented, measured live 2026-11-17)
+```
+GET /v1/catalog/{storefront}/songs/{catalogId}/lyrics?l={lang}
+Authorization: Bearer {developer token}
+Music-User-Token: {user token}
+Origin/Referer: https://music.apple.com
+```
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": "1850019038",
+      "type": "lyrics",
+      "attributes": {
+        "playParams": { "catalogId": "1850019038", "displayType": 2, "kind": "lyric" },
+        "ttml": "<tt xmlns=\"http://www.w3.org/ns/ttml\" …>…</tt>"
+      }
+    }
+  ]
+}
+```
+
+Measured facts (39-track sweep of one signed-in library, storefront `id`, `en-GB`):
+
+| Case | Result |
+|------|--------|
+| Line-timed song | **200**, `itunes:timing="Line"`, `<p begin end>` only, **0 `<span>`** |
+| Word-timed song | **0 of 39 encountered** — `timing="Word"`/`"Syllable"` never appeared |
+| Unsynced song | **200**, `itunes:timing="None"`, bare `<p>text</p>` |
+| No lyrics / instrumental | **404** |
+| `&extend=ttmlLocalizations` | no change to the payload |
+| `GET /v1/catalog/{sf}/songs/{libraryId}/lyrics` (`i.…`) | **404** — lyrics are catalog-scoped |
+| `GET /v1/me/library/songs/{i.…}` | `attributes.playParams.catalogId` **is present** (e.g. `1850019038`) |
+
+TTML shape actually observed:
+
+```xml
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+    xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    itunes:timing="Line" xml:lang="en">
+  <head><metadata>
+    <ttm:agent type="person" xml:id="v1"/>
+    <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal" leadingSilence="0.160">
+      <translations/><songwriters><songwriter>…</songwriter></songwriters>
+    </iTunesMetadata>
+  </metadata></head>
+  <body dur="5:26.491">
+    <div begin="44.851" end="1:21.213">
+      <p begin="44.851" end="50.917" itunes:key="L1" ttm:agent="v1">I know a place</p>
+      <p begin="1:04.163" end="1:11.681" itunes:key="L3" ttm:agent="v1">We get married in our heads</p>
+    </div>
+  </body>
+</tt>
+```
+
+Parsing rules this drives (`src-tauri/src/api/lyrics.rs`):
+
+- **Times are mixed**: bare seconds (`44.851`) and `M:SS.mmm` (`1:04.163`) in the same
+  document; `body dur` can be `5:26.491`. All become milliseconds.
+- **Word/syllable spans** (`<span begin end>`, `ttm:role="x-bg"` for background vocals) are
+  supported, but when Apple ships none the parser splits the line text into words and spreads
+  the line's window proportionally. `Lyrics.word_timed` is `false` in that case — the UI must
+  never imply Apple timed it per word.
+- **Whitespace between spans is significant**; `<p>` text is the concatenation of all text
+  nodes, so `Hello <span>world</span>` never becomes `Helloworld`.
+- Show text with `textContent`, never `innerHTML` — lyric text is untrusted input.
+
 ## 4. Resource Data Models
 
 ### Song Resource

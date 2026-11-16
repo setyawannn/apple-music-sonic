@@ -559,3 +559,111 @@ async fn test_api_neg_08_concurrent_search_requests() {
 
     let _ = shutdown_tx.send(());
 }
+
+// ─── Lyrics (P4) ──────────────────────────────────────────────
+//
+// The endpoint is undocumented, so these tests pin the *contract we measured* rather
+// than Apple's promises: TTML at data[0].attributes.ttml, and a 404 meaning "no
+// lyrics" — never an error the UI has to apologise for.
+
+const MOCK_LYRICS_JSON: &str = r#"{
+  "data": [
+    {
+      "id": "1850019038",
+      "type": "lyrics",
+      "attributes": {
+        "playParams": { "catalogId": "1850019038", "kind": "lyric" },
+        "ttml": "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\" itunes:timing=\"Line\"><body><div><p begin=\"1.0\" end=\"3.5\" itunes:key=\"L1\">I know a place</p><p begin=\"1:05.000\" end=\"1:09.000\" itunes:key=\"L2\">Do you think I have forgotten?</p></div></body></tt>"
+      }
+    }
+  ]
+}"#;
+
+#[tokio::test]
+async fn test_api_pos_11_lyrics_are_fetched_and_parsed() {
+    let (server_url, shutdown_tx) = spawn_mock_server(|line, _req| {
+        assert!(
+            line.contains("/v1/catalog/id/songs/1850019038/lyrics"),
+            "unexpected request: {line}"
+        );
+        (200, MOCK_LYRICS_JSON.to_string())
+    })
+    .await;
+
+    let auth = Arc::new(AuthManager::in_memory());
+    auth.set_user_token(Some("lyrics_token".to_string()))
+        .unwrap();
+    let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
+
+    let lyrics = client
+        .get_song_lyrics("1850019038")
+        .await
+        .expect("lyrics request must succeed")
+        .expect("lyrics must be present");
+
+    assert_eq!(lyrics.lines.len(), 2);
+    assert_eq!(lyrics.lines[0].text, "I know a place");
+    assert_eq!(lyrics.lines[0].start_ms, 1_000);
+    assert_eq!(lyrics.lines[0].end_ms, 3_500);
+    // M:SS.mmm and bare seconds land in the same millisecond space.
+    assert_eq!(lyrics.lines[1].start_ms, 65_000);
+    assert_eq!(lyrics.lines[1].end_ms, 69_000);
+    assert_eq!(lyrics.timing, app_lib::api::LyricsTiming::Line);
+    // Line timing only, so word windows are interpolated — and the model says so.
+    assert!(!lyrics.word_timed);
+    assert_eq!(lyrics.lines[0].segments.len(), 4);
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_api_pos_12_missing_lyrics_is_not_an_error() {
+    let (server_url, shutdown_tx) =
+        spawn_mock_server(|_line, _req| (404, "{\"errors\":[]}".to_string())).await;
+
+    let auth = Arc::new(AuthManager::in_memory());
+    auth.set_user_token(Some("lyrics_token".to_string()))
+        .unwrap();
+    let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
+
+    let lyrics = client
+        .get_song_lyrics("1111111111")
+        .await
+        .expect("a 404 is 'no lyrics', not a failure");
+    assert!(lyrics.is_none());
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_api_pos_13_library_id_resolves_to_its_catalog_twin() {
+    let (server_url, shutdown_tx) = spawn_mock_server(|line, _req| {
+        assert!(
+            line.contains("/v1/me/library/songs/i.4YBNbkzHx3QbVDr"),
+            "unexpected request: {line}"
+        );
+        (
+            200,
+            r#"{"data":[{"id":"i.4YBNbkzHx3QbVDr","type":"library-songs","attributes":{"name":"About You","playParams":{"catalogId":"1850019038","isLibrary":true,"kind":"song"}}}]}"#
+                .to_string(),
+        )
+    })
+    .await;
+
+    let auth = Arc::new(AuthManager::in_memory());
+    auth.set_user_token(Some("lyrics_token".to_string()))
+        .unwrap();
+    let client = ApiClient::with_base_url(auth, server_url.clone(), server_url);
+
+    let resolved = client
+        .resolve_catalog_id("i.4YBNbkzHx3QbVDr")
+        .await
+        .expect("lookup must succeed");
+    assert_eq!(resolved.as_deref(), Some("1850019038"));
+
+    // A catalog id is already catalog-scoped: no request at all.
+    let passthrough = client.resolve_catalog_id("1850019038").await.unwrap();
+    assert_eq!(passthrough.as_deref(), Some("1850019038"));
+
+    let _ = shutdown_tx.send(());
+}

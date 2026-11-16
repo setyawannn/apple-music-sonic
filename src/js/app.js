@@ -71,6 +71,20 @@ const state = {
   nowPlayingOpen: false,
   // Debounce handle for transient empty player-state reports (see the listener).
   streamEmptyTimer: null,
+
+  // ─── Karaoke lyrics (P4) ───
+  // The lyrics pane lives in the Now Playing view. Its DOM is built once per track;
+  // while playing, only word classes change, driven by a requestAnimationFrame loop
+  // (player-state only ticks twice a second, which is far too coarse for words).
+  lyricsVisible: true,
+  lyrics: null, // typed model from Rust: { lines, timing, wordTimed, … }
+  lyricsKey: null, // catalog id (or library id) the current lyrics belong to
+  lyricsStatus: "idle", // idle | loading | ready | unavailable | error
+  lyricsCache: new Map(), // track key → { status, lyrics }
+  lyricsLineEls: [], // [{ el, words: [{ el, start, end }] }]
+  lyricsActiveLine: -1,
+  lyricsActiveWord: -1,
+  lyricsFrame: null,
 };
 
 // ─── DOM References ────────────────────────────────────────────
@@ -128,6 +142,9 @@ const npVolumeFill = $("#np-volume-fill");
 const npShuffleBtn = $("#np-shuffle-btn");
 const npRepeatBtn = $("#np-repeat-btn");
 const npQueueCount = $("#np-queue-count");
+const npStage = $(".np-stage");
+const npLyrics = $("#np-lyrics");
+const npLyricsBtn = $("#np-lyrics-btn");
 
 // ─── Navigation ────────────────────────────────────────────────
 document.querySelector(".sidebar-nav.library-nav")?.addEventListener("click", (e) => {
@@ -391,7 +408,14 @@ function applyPlayerState(payload) {
     el.classList.toggle("playing", sameId || sameName);
   });
 
-  if (state.nowPlayingOpen) paintNowPlaying();
+  // Keep the lyrics pane pointed at the track that is actually playing. Cached, so
+  // the twice-a-second tick never hits the network.
+  syncLyricsForTrack(payload);
+
+  if (state.nowPlayingOpen) {
+    paintNowPlaying();
+    if (state.streamIsPlaying) startLyricsClock();
+  }
 }
 
 // Reset the now-playing area when playback really stops (nothing follows the empty).
@@ -407,6 +431,13 @@ function clearNowPlayingUI() {
   state.streamTitle = "";
   state.streamArtist = "";
   state.streamAlbum = "";
+  // Nothing is playing, so the lyrics pane must not keep describing the last song.
+  state.lyrics = null;
+  state.lyricsKey = null;
+  state.lyricsStatus = "idle";
+  buildLyricsDom();
+  paintLyricsToggle();
+  stopLyricsClock();
   if (nowPlayingTitle) nowPlayingTitle.textContent = "No Track Selected";
   if (nowPlayingArtist) nowPlayingArtist.textContent = "Open your library to start playing";
   const badge = $("#now-playing-badge");
@@ -2113,7 +2144,14 @@ function setNowPlayingOpen(open) {
   state.nowPlayingOpen = open;
   nowPlayingView.classList.toggle("open", open);
   nowPlayingView.setAttribute("aria-hidden", open ? "false" : "true");
-  if (open) paintNowPlaying();
+  if (open) {
+    paintNowPlaying();
+    paintLyricsToggle();
+    paintLyricsAt(streamPositionMs());
+    startLyricsClock();
+  } else {
+    stopLyricsClock();
+  }
 }
 
 function paintNowPlayingArtwork() {
@@ -2172,9 +2210,270 @@ function paintNowPlaying() {
   }
 }
 
+// ─── Karaoke lyrics ────────────────────────────────────────────
+//
+// Lyrics come from Apple's undocumented catalog endpoint. Rust parses the TTML and
+// returns lines with word segments; this side only paints. Three rules keep it honest
+// and cheap:
+//
+//  1. One request per track, cached — `player-state` ticks twice a second and must
+//     never trigger network traffic.
+//  2. The DOM is built once per track. Per frame only class names change, the same
+//     discipline as the artwork (bug 06), which matters far more at 60 fps.
+//  3. Apple usually ships line timing only (36 of 39 sampled tracks). In that case
+//     the parser interpolates word windows across the line, and the UI highlights in
+//     step without ever claiming it is word-accurate.
+
+function lyricsKeyFor(payload) {
+  if (!payload) return null;
+  // Catalog id first: library ids (`i.…`) are a different namespace, and lyrics are
+  // catalog-scoped. `catalogId` is published by bootstrap.js from playParams.
+  if (payload.catalogId) return String(payload.catalogId);
+  return payload.id ? String(payload.id) : null;
+}
+
+function syncLyricsForTrack(payload) {
+  const key = lyricsKeyFor(payload);
+  if (!key || key === state.lyricsKey) return;
+
+  state.lyricsKey = key;
+  const cached = state.lyricsCache.get(key);
+  if (cached) {
+    applyLyrics(cached.status, cached.lyrics);
+    return;
+  }
+
+  applyLyrics("loading", null);
+  fetchLyrics(key, payload.catalogId || null, payload.id || null);
+}
+
+async function fetchLyrics(key, catalogId, songId) {
+  try {
+    const result = await invoke("get_lyrics", { songId, catalogId });
+    const entry = result
+      ? { status: "ready", lyrics: result }
+      : { status: "unavailable", lyrics: null };
+    if (entry.status === "ready") {
+      console.info("[lyrics]", {
+        key,
+        lines: result.lines.length,
+        timing: result.timing,
+        wordTimed: result.wordTimed,
+      });
+    }
+    state.lyricsCache.set(key, entry);
+    if (state.lyricsKey === key) applyLyrics(entry.status, entry.lyrics);
+  } catch (err) {
+    console.warn("[lyrics] fetch failed:", err);
+    state.lyricsCache.set(key, { status: "error", lyrics: null });
+    if (state.lyricsKey === key) applyLyrics("error", null);
+  }
+}
+
+function applyLyrics(status, lyrics) {
+  state.lyricsStatus = status;
+  state.lyrics = lyrics;
+  buildLyricsDom();
+  paintLyricsToggle();
+  if (state.nowPlayingOpen) paintLyricsAt(streamPositionMs());
+}
+
+function lyricsStatusMessage(status) {
+  switch (status) {
+    case "loading":
+      return { title: "Loading lyrics…", detail: "" };
+    case "unavailable":
+      return {
+        title: "Lyrics aren't available",
+        detail: "Apple has none for this song, or it is a library-only upload.",
+      };
+    case "error":
+      return {
+        title: "Couldn't load lyrics",
+        detail: "The lyrics service did not answer. Try again later.",
+      };
+    default:
+      return { title: "", detail: "" };
+  }
+}
+
+function buildLyricsDom() {
+  if (!npLyrics) return;
+  npLyrics.textContent = "";
+  npLyrics.classList.remove("unsynced");
+  state.lyricsLineEls = [];
+  state.lyricsActiveLine = -1;
+  state.lyricsActiveWord = -1;
+
+  if (state.lyricsStatus !== "ready" || !state.lyrics) {
+    const { title, detail } = lyricsStatusMessage(state.lyricsStatus);
+    if (!title) return;
+    const box = document.createElement("div");
+    box.className = "np-lyrics-status";
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    box.appendChild(heading);
+    if (detail) {
+      const note = document.createElement("span");
+      note.textContent = detail;
+      box.appendChild(note);
+    }
+    npLyrics.appendChild(box);
+    return;
+  }
+
+  const lyrics = state.lyrics;
+  // `none` = Apple did not time this song at all; show the words, skip karaoke.
+  const unsynced = lyrics.timing === "none" || !Array.isArray(lyrics.lines);
+  if (unsynced) npLyrics.classList.add("unsynced");
+
+  const fragment = document.createDocumentFragment();
+  lyrics.lines.forEach((line, lineIndex) => {
+    const el = document.createElement("div");
+    el.className = "np-lyric-line";
+    el.dataset.line = String(lineIndex);
+
+    if (unsynced) {
+      // Plain block: no word spans to sync, so keep the authored line breaks.
+      el.textContent = line.text;
+    } else {
+      const segments =
+        Array.isArray(line.segments) && line.segments.length
+          ? line.segments
+          : [{ startMs: line.startMs, endMs: line.endMs, text: line.text }];
+      const words = [];
+      segments.forEach((segment) => {
+        const word = document.createElement("span");
+        word.className = "np-lyric-word" + (segment.background ? " background" : "");
+        // textContent, never innerHTML: lyric text is untrusted input.
+        word.textContent = segment.text;
+        words.push({ el: word, start: segment.startMs || 0, end: segment.endMs || 0 });
+        el.appendChild(word);
+      });
+      el.title = "Play from here";
+      // Line click seeks; word targets are too small to be reliable.
+      el.addEventListener("click", () => seekToMs(line.startMs));
+      state.lyricsLineEls.push({
+        el,
+        words,
+        start: line.startMs || 0,
+        end: line.endMs || 0,
+      });
+    }
+
+    fragment.appendChild(el);
+  });
+
+  npLyrics.appendChild(fragment);
+  paintLyricsAt(streamPositionMs());
+}
+
+/** The smoothed playhead the two progress bars already use, in milliseconds. */
+function streamPositionMs() {
+  const seconds = state.streamIsPlaying
+    ? Math.min(state.streamDuration || 0, (Date.now() - state.streamAnchor) / 1000)
+    : state.streamPosition || 0;
+  return seconds * 1000;
+}
+
+function seekToMs(ms) {
+  const total = state.streamDuration || 0;
+  if (!(total > 0) || !(ms >= 0)) return;
+  seekToFraction(Math.min(1, Math.max(0, ms / 1000 / total)));
+}
+
+function scrollLyricsLineIntoView(el) {
+  if (!npLyrics || !el) return;
+  const pane = npLyrics.getBoundingClientRect();
+  const lineRect = el.getBoundingClientRect();
+  // Only move when the line leaves the comfortable middle band, so the pane does not
+  // jitter on every line change.
+  const margin = Math.min(80, pane.height * 0.2);
+  if (lineRect.top >= pane.top + margin && lineRect.bottom <= pane.bottom - margin) return;
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function paintLyricsAt(ms) {
+  const lines = state.lyricsLineEls;
+  if (!lines.length || state.lyricsStatus !== "ready") return;
+
+  // Last line that has started; the list is in playback order.
+  let index = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].start <= ms) index = i;
+    else break;
+  }
+
+  if (index !== state.lyricsActiveLine) {
+    lines.forEach((line, i) => {
+      line.el.classList.toggle("active", i === index);
+      line.el.classList.toggle("past", i < index);
+      if (i !== index) line.words.forEach((w) => w.el.classList.remove("sung", "current"));
+    });
+    state.lyricsActiveLine = index;
+    state.lyricsActiveWord = -1;
+    if (index >= 0) scrollLyricsLineIntoView(lines[index].el);
+  }
+
+  if (index < 0) return;
+
+  const line = lines[index];
+  let wordIndex = -1;
+  for (let i = 0; i < line.words.length; i += 1) {
+    if (line.words[i].start <= ms) wordIndex = i;
+    else break;
+  }
+  // Past the end of the line: everything sung, nothing current.
+  if (line.end && ms >= line.end) wordIndex = line.words.length;
+
+  if (wordIndex === state.lyricsActiveWord) return;
+  line.words.forEach((word, i) => {
+    word.el.classList.toggle("sung", i < wordIndex);
+    word.el.classList.toggle("current", i === wordIndex);
+  });
+  state.lyricsActiveWord = wordIndex;
+}
+
+// `player-state` only arrives twice a second, which is far too coarse for words, so
+// words are driven by an animation frame loop that reads the already-smoothed anchor.
+// It runs only while the view is open and something is playing.
+function startLyricsClock() {
+  if (state.lyricsFrame) return;
+  const tick = () => {
+    state.lyricsFrame = null;
+    if (!state.nowPlayingOpen || !state.streamIsPlaying) return;
+    paintLyricsAt(streamPositionMs());
+    state.lyricsFrame = requestAnimationFrame(tick);
+  };
+  state.lyricsFrame = requestAnimationFrame(tick);
+}
+
+function stopLyricsClock() {
+  if (state.lyricsFrame) cancelAnimationFrame(state.lyricsFrame);
+  state.lyricsFrame = null;
+}
+
+function paintLyricsToggle() {
+  const on = state.lyricsVisible && state.lyricsStatus !== "idle";
+  npStage?.classList.toggle("lyrics-on", on);
+  npLyricsBtn?.classList.toggle("active", on);
+  npLyricsBtn?.setAttribute("aria-pressed", on ? "true" : "false");
+}
+
+function setLyricsVisible(visible) {
+  state.lyricsVisible = !!visible;
+  if (state.lyricsVisible && !state.nowPlayingOpen) setNowPlayingOpen(true);
+  paintLyricsToggle();
+  if (!state.lyricsVisible) {
+    stopLyricsClock();
+    return;
+  }
+  paintLyricsAt(streamPositionMs());
+  if (state.streamIsPlaying) startLyricsClock();
+}
+
 /** Fraction (0..1) of a horizontal bar at the click position. */
-function fractionFromEvent(event, element) {
-  const rect = element.getBoundingClientRect();
+function fractionFromEvent(event, element) {  const rect = element.getBoundingClientRect();
   return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
 }
 
@@ -2326,7 +2625,11 @@ async function seekToFraction(pct) {
     state.streamAnchor = Date.now() - target * 1000;
     if (progressFill) progressFill.style.width = `${pct * 100}%`;
     if (currentTime) currentTime.textContent = formatTime(target);
-    if (state.nowPlayingOpen) paintNowPlaying();
+    if (state.nowPlayingOpen) {
+      paintNowPlaying();
+      // Keep the karaoke line under the new playhead even while paused.
+      paintLyricsAt(target * 1000);
+    }
     try {
       await invoke("stream_seek", { position: target });
     } catch (err) {
@@ -2362,6 +2665,7 @@ $("#np-prev-btn")?.addEventListener("click", () => prevBtn?.click());
 $("#np-next-btn")?.addEventListener("click", () => nextBtn?.click());
 $("#np-shuffle-btn")?.addEventListener("click", () => shuffleBtn?.click());
 $("#np-repeat-btn")?.addEventListener("click", () => repeatBtn?.click());
+$("#np-lyrics-btn")?.addEventListener("click", () => setLyricsVisible(!state.lyricsVisible));
 
 npProgressBar?.addEventListener("click", (e) => {
   seekToFraction(fractionFromEvent(e, npProgressBar));
@@ -2492,6 +2796,11 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.key === "m" || e.key === "M") {
     document.getElementById("volume-btn")?.click();
+    return;
+  }
+  if (e.key === "l" || e.key === "L") {
+    setLyricsVisible(!state.lyricsVisible);
+    return;
   }
 });
 

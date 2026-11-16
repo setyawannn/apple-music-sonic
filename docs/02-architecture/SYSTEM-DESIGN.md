@@ -17,8 +17,8 @@
 └──────────────────────────┬──────────────────────────────────────────┘
                            │  invoke() / listen()
 ┌──────────────────────────▼──────────────────────────────────────────┐
-│ Tauri command layer — commands/{local,auth,catalog,playlist,         │
-│ diagnostics}.rs · player/mod.rs · 58 commands, window lifecycle      │
+│ Tauri command layer — commands/{local,auth,catalog,lyrics,playlist,      │
+│ diagnostics}.rs · player/mod.rs · 59 commands, window lifecycle      │
 │ AppError / AppResult (error.rs) · AppState (state.rs)                │
 └──────┬───────────────────┬──────────────────────┬───────────────────┘
        │                   │                      │
@@ -40,9 +40,9 @@ main.rs
 └── lib.rs  (wiring + run(); AppState { library, audio_engine, api_client })
      ├── error.rs     AppError / AppResult (serialized as a plain message)
      ├── state.rs     AppState + poison-safe library() accessor
-     ├── commands/    local · auth · catalog · playlist · diagnostics
+     ├── commands/    local · auth · catalog · lyrics · playlist · diagnostics
      ├── player/      hidden window · bootstrap.js · cookie.rs · media.rs (SMTC)
-     ├── api/         AuthManager · ApiClient · LocalSessionReader · models
+     ├── api/         AuthManager · ApiClient · LocalSessionReader · models · lyrics (TTML)
      ├── audio/       Engine · QueueManager · SymphoniaSource · StreamCache   [PARKED]
      ├── library/     Library · Database · Scanner · ArtworkManager           [PARKED]
      └── drm/         AppLocator · NativeLibrary · CoreAudio/CoreMedia/CoreFP [ABANDONED]
@@ -66,7 +66,8 @@ state = {
   streamPhase, restore,                                         // transport state machine + last session
   streamQueue, streamCurrentId, queueOpen,                      // Up Next drawer
   streamTitle, streamArtist, streamAlbum, streamArtworkLarge,   // Now Playing view
-  nowPlayingOpen                                                // full-screen view visibility
+  nowPlayingOpen,                                               // full-screen view visibility
+  lyrics, lyricsKey, lyricsStatus, lyricsCache, lyricsVisible   // karaoke pane (P4)
 }
 ```
 
@@ -90,9 +91,10 @@ MusicKit's own state. The local fork remains a wart until the parked engine is f
 | Seek | progress bar → `stream_seek` → `seekToTime()` |
 | Track loading / failure | `streamPhase` idle→loading→playing/paused/error; spinner + toast; 12 s watchdog |
 | Launch | `get_last_player_state` → repaint bar paused, keep queue; first play rebuilds it |
-| Keyboard | Space / arrows / `M` → same handlers as the transport buttons |
+| Keyboard | Space / arrows / `M` / `L` → same handlers as the transport buttons |
 | Windows media keys | SMTC `ButtonPressed` → `player/media.rs` → `player_command` (resume/pause/stop/next/previous); the flyout mirrors `player-state` |
 | Full-screen Now Playing | click the bar's artwork/title (or `Esc` to close) → `#now-playing-view`, painted from `state.stream*`; its buttons forward to the bar handlers |
+| Lyrics | `player-state` → `get_lyrics({ songId, catalogId })` → `/v1/catalog/{sf}/songs/{id}/lyrics` → `api/lyrics.rs` TTML parse; lyric DOM built once, rAF loop flips word classes |
 | Up Next drawer | page `mk_queue` cookie (base64) → `start_state_poller` → `player-queue`; click → `stream_jump_to` → `changeToMediaAtIndex` |
 | Album detail | `get_catalog_album` → header + Play/Shuffle queue |
 | Search | `invoke("search_catalog")` → `amp-api.music.apple.com` |
@@ -109,7 +111,7 @@ MusicKit's own state. The local fork remains a wart until the parked engine is f
 
 Radio stations (needs Apple's stations API) · `sync_cloud_library` (registered, no UI) ·
 removing a track from a playlist (Apple exposes no endpoint — see `HOW-IT-WORKS`) ·
-lyrics / downloads (out of scope). See `docs/03-implementation/02-WHATS-MISSING.md`.
+downloads (out of scope). See `docs/03-implementation/02-WHATS-MISSING.md`.
 
 ## Concurrency model
 

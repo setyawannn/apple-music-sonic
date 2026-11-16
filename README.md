@@ -9,7 +9,8 @@ A hobby project: reproduce the Apple Music desktop experience in a small native 
 the subscription you already pay for. No Apple Developer Program, no paid APIs, no telemetry.
 
 **MVP:** sign in → browse and search the catalog → play full songs, with a playback bar that
-matches what the player is actually doing.
+matches what the player is actually doing → read (and sing along to) time-synced lyrics in the
+Now Playing view.
 
 ## Status
 
@@ -24,10 +25,11 @@ matches what the player is actually doing.
 | Album detail (catalog + iCloud), iCloud library views | ✅ works |
 | Cloud playlists (read + create/rename/delete/add songs, auto-synced) | ✅ works |
 | Loading spinner, error toast, resume-on-launch | ✅ works |
-| Keyboard shortcuts (Space, arrows, `M`) | ✅ works |
+| Keyboard shortcuts (Space, arrows, `M`, `L`) | ✅ works |
 | Windows media keys + now-playing flyout (SMTC) | ✅ works |
 | Up Next queue drawer (click to jump) | ✅ works |
 | Full-screen Now Playing view | ✅ works |
+| Karaoke lyrics in Now Playing (line-timed, word highlight, click-to-seek) | ✅ works (line timing only; Apple rarely ships word timing) |
 | Radio stations | ❌ not wired (needs Apple's stations API) |
 | Local file playback | ⏸ parked — see `docs/03-implementation/04-PARKED-LOCAL-PLAYBACK.md` |
 | Lossless / Atmos | ⛔ out of reach on this architecture (AAC 256 ceiling) |
@@ -56,6 +58,24 @@ has loaded still runs, exactly once — and no command ever waits for a readines
 State comes back through a cookie because the page's CSP blocks loopback HTTP and WebView2 does
 not mirror `document.title`.
 
+## How lyrics work
+
+Lyrics are a REST call, not a scrape of the hidden player:
+
+```
+GET /v1/catalog/{storefront}/songs/{catalogId}/lyrics?l={lang}   (undocumented)
+  → data[0].attributes.ttml
+  → src-tauri/src/api/lyrics.rs parses TTML → lines + word segments
+  → the Now Playing view builds the lyric DOM once, then a rAF loop lights words
+```
+
+Two honest caveats. **Library songs** report `i.…` ids, which 404 on that endpoint; the player
+page publishes `playParams.catalogId` in `mk_state` (with a library→catalog lookup as fallback)
+so the right song is asked for. And **Apple almost always ships line timing, not word timing**
+(36 of 39 sampled tracks), so the word highlight inside a line is interpolated — the model's
+`wordTimed` flag says which it is. When Apple has no lyrics, the view says so instead of
+inventing them.
+
 ## Requirements
 
 - Windows 10/11 (x64)
@@ -78,12 +98,12 @@ Production binary: `src-tauri/target/release/app.exe` (~20 MB).
 index.html                  UI shell (sidebar, main view, playback bar, Now Playing view)
 src/js/app.js               UI logic and Tauri command calls
 src/styles/app.css          Apple-style dark theme
-src-tauri/src/lib.rs        module wiring, 58 Tauri commands, window lifecycle
+src-tauri/src/lib.rs        module wiring, 59 Tauri commands, window lifecycle
 src-tauri/src/error.rs      typed AppError / AppResult
 src-tauri/src/state.rs      AppState
-src-tauri/src/commands/     auth, catalog, playlists, diagnostics, parked local commands
+src-tauri/src/commands/     auth, catalog, lyrics, playlists, diagnostics, parked local commands
 src-tauri/src/player/       hidden MusicKit webview, bootstrap JS, cookie codecs, SMTC media keys
-src-tauri/src/api/          REST client, auth, session import
+src-tauri/src/api/          REST client, auth, session import, TTML lyrics parser
 src-tauri/src/audio/        parked local engine (symphonia + rodio)
 src-tauri/src/library/      parked local library (SQLite)
 src-tauri/src/drm/          abandoned native-decrypt attempt (diagnostics only)

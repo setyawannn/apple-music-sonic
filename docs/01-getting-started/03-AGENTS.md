@@ -17,21 +17,25 @@ the user's existing Apple Music subscription. Rust + Tauri v2, no paid infrastru
 6. Cloud playlists — read **and** create/rename/delete/add-tracks (writes to Apple Music)
 7. Play full songs, with working transport (play/pause, next/prev, seek, shuffle, repeat)
    and a playback bar that tells the truth
+8. Karaoke lyrics in the Now Playing view — line-timed from Apple, with per-word
+   highlighting interpolated inside the line when Apple ships line timing only
 
 **Explicit non-goals (for now):**
 
 - Local file playback is **PARKED** — see `docs/03-implementation/04-PARKED-LOCAL-PLAYBACK.md`.
   Do not build it, do not delete it, do not route UI into it.
-- No downloads/offline, no lyrics, no Atmos, no equalizer, no Discord presence.
+- No downloads/offline, no Atmos, no equalizer, no Discord presence.
 
 ## Quick facts
 
-- **34 Rust files, ~6,150 lines**, **58 Tauri commands** registered in `generate_handler!`
+- **36 Rust files, ~7,950 lines**, **59 Tauri commands** registered in `generate_handler!`
 - **~20 MB** release binary; RAM target **~80 MB** (not yet measured — treat old claims as aspirational)
-- Frontend: `index.html`, `src/js/app.js` (2,628 lines), `src/styles/app.css` (1,643 lines)
+- Frontend: `index.html`, `src/js/app.js` (~3,000 lines), `src/styles/app.css` (~1,760 lines)
 - Streaming works: hidden MusicKit WebView2 + Windows PlayReady CDM
 - Playback state works: page writes a cookie, Rust polls the cookie jar, emits `player-state`
 - Auth works: developer token scraped from Apple's web bundle + `media-user-token` cookie
+- Lyrics work: catalog REST + TTML parsed in Rust; word highlighting runs on a frame clock
+  in the Now Playing view (see "How lyrics work")
 - Media keys and the Windows now-playing flyout work: SMTC is bound to the main window
   and fed from the same `player-state` blob
 - Standards: `cargo fmt` (`rustfmt.toml`, 100 columns), clippy `all` clean, every command
@@ -78,6 +82,35 @@ CDM. `src-tauri/src/drm/**` is dead weight that only feeds `get_native_bridge_st
 ALAC content type with `NotSupportedError`. EME never exposes keys or PCM, so an in-page WASM
 decoder cannot help. Do not promise lossless without reading
 `docs/05-reference/04-AUDIO-QUALITY-CEILING.md` first.
+
+## How lyrics work
+
+```
+player-state arrives (catalogId + id)
+  → syncLyricsForTrack(): one request per track, cached in a Map
+  → invoke("get_lyrics", { songId, catalogId })
+  → Rust: resolve library id → catalog id only when catalogId is missing,
+    then GET /v1/catalog/{sf}/songs/{id}/lyrics?l={lang}
+  → api/lyrics.rs parses TTML → { lines[], timing, wordTimed, leadingSilenceMs }
+  → app.js builds the lyric DOM once per track
+  → rAF loop reads the already-smoothed streamAnchor and flips word classes
+```
+
+- Lyrics are **catalog-scoped**: `GET /v1/catalog/{sf}/songs/i.…/lyrics` is a **404**. The
+  player page publishes `playParams.catalogId` in `mk_state`, and `resolve_catalog_id` is the
+  fallback for library-only reports.
+- **Apple ships line timing, not word timing** (measured: 36/39 tracks `itunes:timing="Line"`,
+  0 with word spans, 3 unsynced, 1 404). `api/lyrics.rs` supports `<span begin end>` (including
+  `ttm:role="x-bg"` background vocals), and otherwise interpolates word windows across the
+  line. `word_timed` marks which is which — never claim Apple's timing for interpolated words.
+- **404 is `Ok(None)`**, not an error. The UI shows "Lyrics aren't available" and moves on.
+- The pane **replaces the artwork column** in `#now-playing-view` (`.np-stage.lyrics-on`), and
+  `L` toggles it. Line click seeks to that line.
+- **Build the lyric DOM once per track and only toggle classes per frame** — the same rule as
+  the artwork (bug 06), except here it runs at 60 fps. `player-state` ticks are far too coarse
+  for words, which is why the highlight is driven by `requestAnimationFrame` off
+  `state.streamAnchor`, and the loop stops when the view is closed or playback pauses.
+- Lyric text is untrusted: insert it with `textContent`, never `innerHTML`.
 
 ## Hard rules
 
@@ -178,20 +211,22 @@ decoder cannot help. Do not promise lossless without reading
 
 | Path | Purpose |
 |------|---------|
-| `src-tauri/src/lib.rs` (147) | module wiring, `generate_handler!` (58 commands), `run()` + window lifecycle |
+| `src-tauri/src/lib.rs` (160) | module wiring, `generate_handler!` (59 commands), `run()` + window lifecycle |
 | `src-tauri/src/error.rs` (88) | typed `AppError` / `AppResult`; serialized as a plain message at the IPC boundary |
 | `src-tauri/src/state.rs` (29) | `AppState` + the poison-safe `library()` accessor |
 | `src-tauri/src/commands/local.rs` (263) | **PARKED** local-file commands (engine + SQLite) |
 | `src-tauri/src/commands/auth.rs` (156) | sign-in window, session persistence, storefront |
-| `src-tauri/src/commands/catalog.rs` (46) | catalog browse, search, iCloud library |
+| `src-tauri/src/commands/catalog.rs` (53) | catalog browse, search, iCloud library |
+| `src-tauri/src/commands/lyrics.rs` (30) | `get_lyrics`: catalog-id resolution + lyrics fetch |
 | `src-tauri/src/commands/playlist.rs` (91) | Apple Music playlist read + write |
 | `src-tauri/src/commands/diagnostics.rs` (140) | native-bridge diagnostics for the abandoned DRM path |
 | `src-tauri/src/player/mod.rs` (304) | hidden player window, command dispatch, `mk_state`/`mk_queue` poller, restore persistence |
-| `src-tauri/src/player/bootstrap.js` (179) | page-side MusicKit bootstrap (queue, transport, publish, Up Next) |
+| `src-tauri/src/player/bootstrap.js` (184) | page-side MusicKit bootstrap (queue, transport, publish, Up Next, `catalogId`) |
 | `src-tauri/src/player/cookie.rs` (86) | percent/base64 codecs for the cookie state channel |
 | `src-tauri/src/player/media.rs` (266) | Windows media keys + SMTC flyout (hand-declared interop, metadata mirror) |
 | `src-tauri/src/api/auth.rs` (155) | Developer token, session persistence, storefront |
-| `src-tauri/src/api/client.rs` (739) | REST client: search, album, charts, library, playlists (read **and** create/rename/delete/add-tracks); `fetch_all_pages` paginator |
+| `src-tauri/src/api/client.rs` (819) | REST client: search, album, charts, library, playlists (read **and** create/rename/delete/add-tracks), lyrics + catalog-id resolution; `fetch_all_pages` paginator |
+| `src-tauri/src/api/lyrics.rs` (795) | TTML parser → `Lyrics`/`LyricLine`/`LyricSegment`; word interpolation, `x-bg` roles; fixture-driven tests |
 | `src-tauri/src/api/local_session.rs` (367) | Imports session from WebView2 cookie SQLite |
 | `src-tauri/src/api/models.rs` (90) | Store models |
 | `src-tauri/src/audio/**` (1,071) | **PARKED** local engine |
@@ -199,8 +234,8 @@ decoder cannot help. Do not promise lossless without reading
 | `src-tauri/src/drm/**` (~1,545) | **ABANDONED** native decrypt attempt (diagnostics only) |
 | `src-tauri/rustfmt.toml` | width/edition standard; `cargo fmt` is expected before every commit |
 | `src-tauri/capabilities/player.json` | Remote capability for the `player` webview |
-| `src/js/app.js` (2,628) | All UI logic (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, full-screen Now Playing, playlist read/write, keyboard shortcuts, resume) |
-| `src/styles/app.css` (1,643) | Apple-style dark theme, including the Now Playing view |
+| `src/js/app.js` (~3,000) | All UI logic (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, full-screen Now Playing, karaoke lyrics, playlist read/write, keyboard shortcuts, resume) |
+| `src/styles/app.css` (~1,760) | Apple-style dark theme, including the Now Playing view and lyric pane |
 
 ## Docs map
 

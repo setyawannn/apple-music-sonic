@@ -78,13 +78,27 @@ Backend methods in `api/client.rs` are implemented and exercised:
 | Radio | ❌ honest placeholder (needs Apple stations API) |
 | Loading spinner + error toast (transport state machine) | ✅ |
 | Resume last track/queue on launch | ✅ state live-verified; queue rebuild compile-verified |
-| Keyboard shortcuts (Space, arrows, `M`) | ✅ |
+| Keyboard shortcuts (Space, arrows, `M`, `L`) | ✅ |
 | Windows media keys + now-playing flyout (SMTC) | ✅ |
 | Up Next queue drawer (with jump-to-item) | ✅ |
 | Now Playing full-screen view (art, timeline, transport, volume) | ✅ |
 | Loading spinner clears on real playback, even when Apple reports a different id | ✅ (bug 09) |
-| Lyrics | ❌ |
+| Karaoke lyrics in Now Playing (line-timed, word highlight, click-to-seek, `L` toggle) | ✅ (P4) |
 | Settings panel | ❌ |
+
+## 4b. Lyrics — ✅ (P4, 2026-11-17)
+
+| Item | Status |
+|------|--------|
+| `GET /v1/catalog/{sf}/songs/{id}/lyrics?l={lang}` (undocumented) | ✅ measured live; `data[0].attributes.ttml` |
+| TTML parser (`api/lyrics.rs`) | ✅ `<p begin end>`, `<span begin end>`, `ttm:role="x-bg"`, `<br/>`, entities, `M:SS.mmm` + bare seconds |
+| Line timing | ✅ all 36 timed tracks in the sweep |
+| Word timing from Apple | ❌ never observed (0/39); parser supports it, interpolation fills the gap |
+| Unsynced lyrics (`itunes:timing="None"`) | ✅ shown as a static block |
+| No lyrics (404) | ✅ `Option<Lyrics>` → "Lyrics aren't available" |
+| Library id → catalog id | ✅ `playParams.catalogId` in `mk_state`, with `resolve_catalog_id` fallback |
+| Rendering | ✅ lyric DOM built once per track; per-frame class flips only; rAF clock off `state.streamAnchor` |
+| Honesty flag | ✅ `Lyrics.word_timed` distinguishes Apple's spans from interpolated windows |
 
 ## 5. Diagnostics — ✅ but low value
 
@@ -106,16 +120,20 @@ See `04-PARKED-LOCAL-PLAYBACK.md`.
 `SetDllDirectoryW` with an RAII scope. It loads. It never decrypted anything: the license
 challenge must come from a real CDM. Kept only because two diagnostics commands reference it.
 
-## 8. Tests — 141 pass, 0 fail (2026-11-15)
+## 8. Tests — 156 pass, 0 fail (2026-11-17)
 
 | Suite | Tests | What it actually covers |
 |-------|-------|-------------------------|
-| Unit (in-module) | 59 | cookie parsing, percent-decode of the state channel, `AppError` serialization, SMTC button ids, DLL loader/locator/bindings |
-| `api_acceptance_tests` | 18 | models, JSON shapes, error paths, list pagination (`next` cursor + offset fallback) |
+| Unit (in-module) | 71 | cookie parsing, percent-decode of the state channel, `AppError` serialization, SMTC button ids, DLL loader/locator/bindings, **TTML lyrics parser (12)** |
+| `api_acceptance_tests` | 21 | models, JSON shapes, error paths, list pagination (`next` cursor + offset fallback), lyrics fetch/404/catalog-id resolution |
 | `audio_acceptance_tests` | 16 | parked local engine (serializes the shared WASAPI device) |
 | `ffi_acceptance_tests` | 16 | abandoned DLL bindings (serializes the shared staged-DLL directory) |
 | `library_acceptance_tests` | 16 | parked SQLite library |
 | `streaming_acceptance_tests` | 16 | HLS parsers + parked stream cache |
+
+The parser tests run against **fixtures captured from a live session**
+(`src-tauri/tests/fixtures/lyrics-line.ttml`, `lyrics-plain.ttml`), so a change in Apple's
+TTML shape fails a test instead of quietly breaking the pane.
 
 **Nothing tests the live streaming path** — no test touches the hidden webview, the JS
 command queue, the cookie poller, or the frontend. Verification for those is a dev run with
@@ -144,6 +162,7 @@ the hidden player lives in `player/` (`bootstrap.js`, `cookie.rs`, `media.rs`).
 | Loading/error state, keyboard shortcuts, resume on launch | ✅ done (P3) |
 | Windows media keys, Windows now-playing flyout | ✅ done (P3) |
 | Full-screen Now Playing view | ✅ done (P3) |
+| Karaoke lyrics in Now Playing | ✅ done (P4) |
 | Browse / Radio | ✅ Browse · ❌ Radio (stations API) |
 | Local file playback | ⏸ parked |
 | Native decryption | ⚰ abandoned |

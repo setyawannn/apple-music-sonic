@@ -184,6 +184,9 @@
           </svg>
         </button>
         <span class="np-eyebrow">Now Playing</span>
+        <button class="np-icon-btn" id="np-lyrics-btn" title="Lyrics (L)" aria-label="Lyrics">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16v2H4V5zm0 6h11v2H4v-2zm0 6h16v2H4v-2z"/></svg>
+        </button>
         <button class="np-icon-btn np-queue-btn" id="np-queue-btn" title="Up Next">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h11v2H4V6zm0 5h11v2H4v-2zm0 5h7v2H4v-2zm12-9.5l4.5 3.5-4.5 3.5v-7z"/></svg>
           <span class="queue-count" id="np-queue-count" style="display: none;"></span>
@@ -192,6 +195,10 @@
 
       <div class="np-stage">
         <div class="np-art" id="np-art"></div>
+
+        <!-- Karaoke lyrics. Fills the artwork column when toggled on; built once per
+             track, then only word classes change while it plays. -->
+        <div class="np-lyrics" id="np-lyrics" aria-live="off"></div>
 
         <div class="np-meta">
           <h1 class="np-title" id="np-title">No Track Selected</h1>

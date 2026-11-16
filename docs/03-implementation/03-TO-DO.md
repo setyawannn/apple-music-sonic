@@ -116,7 +116,7 @@ a dismissible toast reports failures (previously only `console.error`). Verified
 `start_state_poller` writes the last track's state to
 `%APPDATA%\com.applemusicrs.desktop\player_state.json` (throttled to song changes and ~5 s
 steps); `stream_play` writes the queue to `player_queue.json`. New command
-`get_last_player_state` (58 commands today) returns both. On launch `restoreLastSession()` repaints
+`get_last_player_state` (58 commands at the time) returns both. On launch `restoreLastSession()` repaints
 the bar paused and remembers the queue; the first press of play rebuilds the queue and seeks
 back to the saved position. Live-verified: the state file was written with the real track and
 the null-id reset report was correctly ignored. The queue file/rebuild path has not been
@@ -130,7 +130,7 @@ Space toggles play/pause, ←/→ seek ±5 s, ↑/↓ adjust volume ±5 %, ⌘/C
 The page publishes the current item + next 40 as base64 JSON in a second cookie `mk_queue`;
 `start_state_poller` decodes it (new `base64_decode`) and emits `player-queue`. The transport
 bar's queue button shows the length; the drawer lists the rows, highlights the playing one, and
-clicking a row calls `stream_jump_to` → `changeToMediaAtIndex` (58 commands). Verified live:
+clicking a row calls `stream_jump_to` → `changeToMediaAtIndex` (58 commands at the time). Verified live:
 `[PLAYER] queue items=5`.
 
 ### P3.5 Windows media keys + now-playing flyout — ✅ DONE (2026-11-15)
@@ -163,9 +163,47 @@ the ~1 Hz state ticks never rebuild the `<img>` (the flicker rule from bug 06).
 
 ---
 
-## P4 — Decide the parked feature
+## P4 — Karaoke lyrics — ✅ DONE (2026-11-17)
 
-Only after P0–P3: develop local file playback, or delete it. Both paths are written out in
+### P4.0 Measure the contract — ✅ DONE
+Probed the live session before writing code (probe deleted afterwards):
+- `GET /v1/catalog/{sf}/songs/{catalogId}/lyrics?l={lang}` → 200 with `data[0].attributes.ttml`.
+- `GET …/songs/{i.…}/lyrics` → **404**; lyrics are catalog-scoped.
+- `playParams.catalogId` **exists** on library songs (`i.4YBNbkzHx3QbVDr` → `1850019038`).
+- Sweep of 40 library songs: **36 `itunes:timing="Line"`**, **3 `"None"`**, **1 404**,
+  **0 with word/syllable spans**. Two real payloads saved as fixtures.
+
+### P4.1 Parse — ✅ DONE
+`src-tauri/src/api/lyrics.rs` (hand-written XML tokenizer, no new dependency) →
+`Lyrics { lines, timing, word_timed, language, leading_silence_ms }`. Handles `<p begin end>`,
+timed `<span>`s with `ttm:role="x-bg"`, `<br/>`, entities, CDATA/comments, and the mixed
+`44.851` / `1:04.163` / `1:02:03.5` time formats. Lines without timed spans get interpolated
+word windows (proportional to word length); `word_timed` records which is which. 12 tests over
+the captured fixtures.
+
+### P4.2 Fetch — ✅ DONE
+`ApiClient::get_song_lyrics` (404 → `Ok(None)`) and `ApiClient::resolve_catalog_id` (library id →
+catalog twin). Command `get_lyrics(song_id, catalog_id)` — 59 commands today. `bootstrap.js`
+publishes `playParams.catalogId` in `mk_state` so the common path needs no lookup.
+
+### P4.3 Paint — ✅ DONE
+Lyrics pane inside `#now-playing-view`, replacing the artwork column (`.np-stage.lyrics-on`),
+`L` or the header button toggles it. The DOM is built once per track; a `requestAnimationFrame`
+loop reads the smoothed `state.streamAnchor` and flips `sung` / `current` classes only when the
+active line or word changes; the loop stops when the view closes or playback pauses. Clicking a
+line seeks to it. Unsynchronised lyrics render as a static block, and a 404 renders
+"Lyrics aren't available" — no invented content.
+
+### P4.4 Docs — ✅ DONE
+TTML contract recorded in `docs/05-reference/03-API-CONTRACTS.md` §3.6; lyrics promoted from
+the non-goal list into the MVP in `AGENTS.md` (+ mirror), `README.md`, `01-STRATEGY.md`;
+`[lyrics]` diagnostics in the console log.
+
+---
+
+## P5 — Decide the parked feature
+
+Develop local file playback, or delete it. Both paths are written out in
 `04-PARKED-LOCAL-PLAYBACK.md`.
 
 ---
@@ -180,3 +218,5 @@ Only after P0–P3: develop local file playback, or delete it. Both paths are wr
 - Run `cargo check --no-default-features` after every `lib.rs` change.
 - One player, one state source. If a change needs a second source of truth, stop and fix the
   first one.
+- Lyrics: never scrape the hidden page for them, never rebuild the lyric DOM per frame (build
+  once, toggle classes), and never present interpolated word windows as Apple's timing.

@@ -64,11 +64,15 @@ otherwise.
 | Queue drawer (P3) | Queue length shown, contents hidden | `mk_queue` cookie (base64) → `player-queue`; Up Next drawer with click-to-jump (verified live: `items=5`) |
 | Playlists (P2.6) | Read-only cards; "New Playlist" wrote to the parked local DB | Library playlists are the real ones; create/rename/delete/add-track write to Apple Music (measured live), local playlist UI removed |
 | Long playlists & library (bug 08) | Anything past the 100th song silently vanished | `fetch_all_pages` follows `next` / `offset`; `[PLAYLIST] N tracks` logged |
+| Lyrics (P4) | No lyrics anywhere | TTML from the catalog endpoint, parsed in Rust; karaoke pane in the Now Playing view, `L` toggles |
+| Word-level lyric timing (P4) | Apple ships spans only rarely | Parser supports them; interpolated otherwise, flagged by `Lyrics.word_timed` — never presented as Apple timing |
 
 ## Out of scope (deliberately)
 
-Downloads/offline · lyrics · Dolby Atmos · equalizer · Discord presence · tray controls ·
-multi-account · queue drag-and-drop · Last.fm scrobbling.
+Downloads/offline · lyric **editing/translation/sharing** · Dolby Atmos · equalizer · Discord
+presence · tray controls · multi-account · queue drag-and-drop · Last.fm scrobbling.
+
+(Karaoke lyrics themselves are in scope since P4 — only the editing surfaces are out.)
 
 ## Parked, decision later
 

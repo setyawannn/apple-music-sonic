@@ -1,9 +1,9 @@
 # Apple Music RS — Strategy
 
-> Last updated: 2026-11-13
+> Last updated: 2026-11-17
 > Status: MVP surface works — sign in, browse, search, album detail, iCloud library, cloud
-> playlists, full-song playback with a real transport, and P3 polish in progress. Radio
-> stations remain the main gap.
+> playlists, full-song playback with a real transport, karaoke lyrics in the Now Playing view.
+> Radio stations remain the main gap.
 
 ---
 
@@ -17,6 +17,10 @@ in Rust + Tauri, on top of the user's **existing subscription**.
 Not a music manager. Not an offline downloader. Not a local-file player. Those were
 earlier ambitions; local-file playback is now parked
 (`docs/03-implementation/04-PARKED-LOCAL-PLAYBACK.md`).
+
+Lyrics *were* on the non-goal list and were promoted into the MVP (`P4`): they belong
+in a Now Playing view, and the catalog endpoint makes them cheap. They are a read-only
+extra — no editing, no translation, no share cards.
 
 ## Constraints
 
@@ -79,10 +83,11 @@ for the probe output and the real cost of the native alternative.
 | Cloud playlists | ✅ works (read + create/rename/delete/add songs) |
 | Browse tab | ✅ works (Top Albums / Top Songs) |
 | Loading spinner / error toast / resume on launch | ✅ works |
-| Keyboard shortcuts | ✅ works (Space, arrows, `M`) |
+| Keyboard shortcuts | ✅ works (Space, arrows, `M`, `L`) |
 | Up Next queue drawer | ✅ works (click to jump) |
 | Windows media keys + flyout | ✅ works (SMTC) |
 | Full-screen Now Playing view | ✅ works |
+| Karaoke lyrics in Now Playing | ✅ works (line timing from Apple; word highlight interpolated; `L` toggles) |
 | Radio stations | ❌ needs Apple's stations API |
 | Local file playback | ⏸ parked |
 | Native DRM decryption | ⚰ abandoned |
@@ -119,8 +124,15 @@ keyboard shortcuts, the Up Next queue drawer, **Windows media keys and the now-p
 mirrors the transport bar rather than owning state. Radio remains out (needs Apple's stations
 API); that is not polish, it is a missing backend.
 
-**P4 — Revisit parked work.**
-Decide: develop local file playback, or delete it. Only after P0–P3.
+**P4 — Karaoke lyrics. ✅ DONE (2026-11-17).**
+Lyrics come from the (undocumented) catalog endpoint as TTML, parsed in Rust into lines plus
+word segments and rendered inside the Now Playing view: the current line is lit, words brighten
+as they are sung, clicking a line seeks, and `L` toggles the pane. Two honesty rules: library
+ids are resolved to their catalog twin (`playParams.catalogId`), and because Apple almost always
+ships **line** timing only, interpolated word windows are flagged as such (`wordTimed`).
+
+**P5 — Revisit parked work.**
+Decide: develop local file playback, or delete it.
 
 Ordered detail: `docs/03-implementation/03-TO-DO.md`.
 

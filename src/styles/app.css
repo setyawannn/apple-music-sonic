@@ -1628,6 +1628,104 @@ html, body {
   color: var(--text-tertiary);
 }
 
+/* ─── Karaoke lyrics ─────────────────────────────────────────── */
+/* The lyrics pane takes over the artwork column when it is on, which is the same
+   trade Apple Music's full-screen player makes: big readable lines, artwork behind. */
+
+.np-lyrics {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  max-height: 62vh;
+  overflow-y: auto;
+  padding: 32px 24px 32px 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  justify-self: stretch;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 32px,
+    #000 calc(100% - 40px),
+    transparent 100%
+  );
+}
+
+.np-stage.lyrics-on .np-art {
+  display: none;
+}
+
+.np-stage.lyrics-on .np-lyrics {
+  display: flex;
+}
+
+.np-lyric-line {
+  font-size: clamp(19px, 2.2vw, 27px);
+  font-weight: 700;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.38);
+  cursor: pointer;
+  transition: color 0.25s ease;
+  white-space: pre-wrap;
+}
+
+.np-lyric-line:hover {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* Only the current line is fully lit; the ones behind it recede. */
+.np-lyric-line.past {
+  color: rgba(255, 255, 255, 0.26);
+}
+
+.np-lyric-line.active {
+  color: #fff;
+}
+
+.np-lyric-word {
+  transition: color 0.16s ease;
+}
+
+/* Inside the active line: unsung words are dimmer, sung words bright, the word
+   being sung right now brightest of all. */
+.np-lyric-line.active .np-lyric-word {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.np-lyric-line.active .np-lyric-word.sung {
+  color: #fff;
+}
+
+.np-lyric-line.active .np-lyric-word.current {
+  color: var(--accent);
+}
+
+.np-lyric-word.background {
+  opacity: 0.72;
+  font-style: italic;
+}
+
+/* Songs Apple only timed by line, or did not time at all: no word karaoke. */
+.np-lyrics.unsynced .np-lyric-line {
+  cursor: default;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.np-lyrics-status {
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.np-lyrics-status strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .np-view .queue-count {
   top: -3px;
   right: -3px;
@@ -1649,6 +1747,13 @@ html, body {
   .np-controls,
   .np-volume {
     justify-content: center;
+  }
+
+  .np-lyrics {
+    max-height: 46vh;
+    padding-right: 4px;
+    text-align: left;
+    width: 100%;
   }
 
   .np-album {

@@ -264,6 +264,42 @@ truth and no second set of commands.
 Artwork is written only when the URL changes (`state.streamArtworkUrl` / `npArt.dataset.url`),
 because `player-state` fires roughly once a second and rebuilding the `<img>` flickers.
 
+## Lyrics — karaoke in the Now Playing view
+
+Lyrics come from Apple's catalog REST API, not from the hidden page:
+
+```
+player-state { id, catalogId }
+  → syncLyricsForTrack()            one request per track, cached in a Map
+  → invoke("get_lyrics", { songId, catalogId })
+  → GET /v1/catalog/{sf}/songs/{id}/lyrics?l={lang}   → data[0].attributes.ttml
+  → api/lyrics.rs: parse_ttml()     → lines + word segments (milliseconds)
+  → buildLyricsDom()                once per track
+  → requestAnimationFrame loop      flips classes only, ~60 fps
+```
+
+Four decisions worth keeping:
+
+1. **Catalog id resolution.** A library row reports `i.…`, and
+   `/v1/catalog/{sf}/songs/i.…/lyrics` is a 404. `bootstrap.js` publishes
+   `playParams.catalogId` inside `mk_state`; `resolve_catalog_id` is the fallback for reports
+   that only carry a library id.
+2. **Timing reality.** Apple timed 36 of 39 sampled tracks by **line**, 3 not at all, and none
+   by word. The parser accepts `<span begin end>` and `ttm:role="x-bg"` (background vocals), and
+   otherwise spreads a line's window across its words in proportion to word length.
+   `Lyrics::word_timed` says which happened, so the UI and the docs never claim Apple's timing
+   for interpolated words.
+3. **A clock fine enough for words.** `player-state` arrives about twice a second, so the
+   highlight is driven by `requestAnimationFrame` reading the same smoothed anchor the progress
+   bars use (`Date.now() - streamAnchor`). The loop runs only while the view is open and audio is
+   playing, and it repaints only when the active line/word index changes.
+4. **Honest empty states.** A 404 is `Ok(None)` → "Lyrics aren't available"; unsynced documents
+   render as a static block; a failed request says so. Nothing is invented.
+
+The pane replaces the artwork column (`.np-stage.lyrics-on`); `L` or the header button toggles
+it, and clicking a line seeks to that line's `start_ms`. Lyric text is inserted with
+`textContent` — it is untrusted input.
+
 ## Restore on launch
 
 `stream_play` writes the queue to `player_queue.json`; the poller writes the last state to
@@ -368,12 +404,12 @@ player after a successful sign-in.
 
 ---
 
-## Command surface (58 commands)
+## Command surface (59 commands)
 
 | Group | Count | Commands |
 |-------|-------|----------|
 | Streaming player | 12 | `stream_play`, `stream_pause`, `stream_resume`, `stream_stop`, `stream_seek`, `stream_next`, `stream_previous`, `stream_shuffle`, `stream_repeat`, `stream_volume`, `get_last_player_state`, `stream_jump_to` |
-| Apple Music API + auth | 19 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `create_cloud_playlist`, `rename_cloud_playlist`, `delete_cloud_playlist`, `add_to_cloud_playlist`, `play_stream_track` |
+| Apple Music API + auth | 20 | `start_apple_sign_in`, `set_user_session`, `sign_out`, `get_auth_state`, `set_storefront`, `search_catalog`, `get_search_suggestions`, `get_catalog_album`, `get_charts`, `get_personal_library`, `get_recommendations`, `get_cloud_playlists`, `get_cloud_playlist_tracks`, `sync_cloud_library`, `create_cloud_playlist`, `rename_cloud_playlist`, `delete_cloud_playlist`, `add_to_cloud_playlist`, `play_stream_track`, `get_lyrics` |
 | Native bridge + diagnostics | 3 | `get_native_bridge_status`, `import_local_apple_session`, `run_native_bridge_diagnostics` |
 | **Parked** local playback | 12 | `play_track`, `play_album`, `pause_playback`, `resume_playback`, `stop_playback`, `seek_to`, `set_volume`, `get_playback_status`, `next_track`, `prev_track`, `set_repeat_mode`, `set_shuffle` |
 | **Parked** local library | 12 | `scan_library`, `get_albums`, `get_tracks`, `get_artists`, `get_playlists`, `get_track_count`, `create_playlist`, `add_to_playlist`, `remove_from_playlist`, `delete_playlist`, `import_playlist`, `export_playlist` |
@@ -398,7 +434,9 @@ not part of the product.
 ## Known limits (not bugs, just ceilings)
 
 - AAC 256 kbps maximum; no lossless, no Atmos.
-- Apple UI features not implemented: lyrics, downloads, radio stations.
+- Word-level lyric timing is rarely shipped by Apple, so most songs highlight words by
+  interpolation inside a line-timed window (line sync is exact).
+- Apple UI features not implemented: downloads, radio stations.
 - Single window, single account, Windows only.
 
 ---
@@ -407,21 +445,22 @@ not part of the product.
 
 | Path | Lines | Role |
 |------|-------|------|
-| `src-tauri/src/lib.rs` | 147 | module wiring, `generate_handler!` (58 commands), `run()` + window lifecycle |
+| `src-tauri/src/lib.rs` | 160 | module wiring, `generate_handler!` (59 commands), `run()` + window lifecycle |
 | `src-tauri/src/error.rs` | 88 | `AppError` / `AppResult` (typed, serialized as a plain message) |
 | `src-tauri/src/state.rs` | 29 | `AppState` + poison-safe `library()` |
-| `src-tauri/src/commands/*.rs` | - | `local` (parked) · `auth` · `catalog` · `playlist` · `diagnostics` |
-| `src-tauri/src/player/mod.rs` | 304 | hidden player window, `player_command`, `start_state_poller` (state + restore persistence) |
-| `src-tauri/src/player/bootstrap.js` | 179 | `PLAYER_BOOTSTRAP`: queue + transport + publish + Up Next |
-| `src-tauri/src/player/cookie.rs` | 86 | percent/base64 codecs for the state channel |
-| `src-tauri/src/player/media.rs` | 266 | SMTC media keys + now-playing flyout |
-| `src-tauri/src/api/client.rs` | 739 | REST: search, suggestions, album, charts, library, playlists (read + create/rename/delete/add-tracks); `fetch_all_pages` paginator |
-| `src-tauri/src/api/local_session.rs` | 367 | WebView2 cookie import |
-| `src-tauri/src/api/auth.rs` | 155 | Developer token, session persistence, storefront |
-| `src-tauri/src/api/models.rs` | 90 | Store models |
-| `src/js/app.js` | 2,628 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, full-screen Now Playing, playlist read/write, keyboard shortcuts, resume) |
-| `src/styles/app.css` | 1,643 | Apple-style dark theme |
-| `index.html` | 262 | Shell: sidebar, main view, playback bar, Now Playing view |
-| `src-tauri/src/audio/**`, `library/**` | 2,077 | **PARKED** local engine + library |
-| `src-tauri/src/drm/**` | 1,538 | **ABANDONED** native decrypt attempt |
+| `src-tauri/src/commands/*.rs` | - | `local` (parked) · `auth` · `catalog` · `lyrics` · `playlist` · `diagnostics` |
+| `src-tauri/src/player/mod.rs` | 343 | hidden player window, `player_command`, `start_state_poller` (state + restore persistence) |
+| `src-tauri/src/player/bootstrap.js` | 184 | `PLAYER_BOOTSTRAP`: queue + transport + publish + Up Next + `catalogId` |
+| `src-tauri/src/player/cookie.rs` | 93 | percent/base64 codecs for the state channel |
+| `src-tauri/src/player/media.rs` | 296 | SMTC media keys + now-playing flyout |
+| `src-tauri/src/api/client.rs` | 819 | REST: search, suggestions, album, charts, library, playlists (read + create/rename/delete/add-tracks), lyrics + catalog-id resolution; `fetch_all_pages` paginator |
+| `src-tauri/src/api/lyrics.rs` | 795 | TTML parser → `Lyrics` / `LyricLine` / `LyricSegment` (word interpolation, `x-bg` roles, fixtures) |
+| `src-tauri/src/api/local_session.rs` | 430 | WebView2 cookie import |
+| `src-tauri/src/api/auth.rs` | 176 | Developer token, session persistence, storefront |
+| `src-tauri/src/api/models.rs` | 101 | Store models |
+| `src/js/app.js` | ~3,006 | All UI logic and command calls (iCloud library, album detail, queue-aware playback, transport state machine, Up Next drawer, full-screen Now Playing, karaoke lyrics, playlist read/write, keyboard shortcuts, resume) |
+| `src/styles/app.css` | ~1,762 | Apple-style dark theme, including the lyric pane |
+| `index.html` | 270 | Shell: sidebar, main view, playback bar, Now Playing view |
+| `src-tauri/src/audio/**`, `library/**` | 2,157 | **PARKED** local engine + library |
+| `src-tauri/src/drm/**` | 1,593 | **ABANDONED** native decrypt attempt |
 | `src-tauri/capabilities/{default,player}.json` | - | Window permissions |

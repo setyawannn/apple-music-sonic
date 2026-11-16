@@ -1,4 +1,5 @@
 use super::auth::AuthManager;
+use super::lyrics::{parse_ttml as parse_lyrics_ttml, Lyrics};
 use super::models::{
     CatalogCharts, CatalogSearchResult, CloudPlaylist, SearchSuggestions, StoreAlbum, StoreArtist,
     StoreSong,
@@ -558,6 +559,85 @@ impl ApiClient {
             );
         }
         Ok(())
+    }
+
+    /// Resolve a playing track's id to its **catalog** id.
+    ///
+    /// Lyrics live under `/v1/catalog/...`, and library songs carry an `i.…` id in a
+    /// different namespace. A library song's `attributes.playParams.catalogId` was
+    /// measured to be present (e.g. `1850019038` for `i.4YBNbkzHx3QbVDr`), so one
+    /// lookup bridges the gap. A catalog id is returned untouched.
+    pub async fn resolve_catalog_id(&self, song_id: &str) -> anyhow::Result<Option<String>> {
+        let trimmed = song_id.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        if !trimmed.starts_with("i.") {
+            return Ok(Some(trimmed.to_string()));
+        }
+        self.ensure_authenticated()?;
+
+        let language = self.auth.language();
+        let url = format!(
+            "{}/v1/me/library/songs/{}?l={}",
+            self.base_url, trimmed, language
+        );
+        let response = self
+            .http
+            .get(&url)
+            .headers(self.build_headers())
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+        let json: Value = response.json().await?;
+        Ok(json["data"][0]["attributes"]["playParams"]["catalogId"]
+            .as_str()
+            .map(str::to_string))
+    }
+
+    /// Lyrics for a catalog song, or `None` when Apple has none for it.
+    ///
+    /// Undocumented endpoint: `GET /v1/catalog/{sf}/songs/{id}/lyrics?l={lang}`
+    /// returns `{"data":[{"attributes":{"ttml":"<tt …>"}}]}`. A 404 (instrumental,
+    /// unlicensed, or a library-only upload) is **not an error** — it is "no lyrics",
+    /// which is a normal state the UI must be able to show honestly.
+    pub async fn get_song_lyrics(&self, catalog_id: &str) -> anyhow::Result<Option<Lyrics>> {
+        self.ensure_authenticated()?;
+
+        let language = self.auth.language();
+        let storefront = self.auth.storefront();
+        let url = format!(
+            "{}/v1/catalog/{}/songs/{}/lyrics?l={}",
+            self.base_url, storefront, catalog_id, language
+        );
+
+        let response = self
+            .http
+            .get(&url)
+            .headers(self.build_headers())
+            .send()
+            .await?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            anyhow::bail!("Lyrics request failed: HTTP {}", status);
+        }
+
+        let json: Value = response.json().await?;
+        let Some(ttml) = json["data"][0]["attributes"]["ttml"].as_str() else {
+            return Ok(None);
+        };
+
+        let lyrics = parse_lyrics_ttml(ttml);
+        if lyrics.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(lyrics))
+        }
     }
 }
 
